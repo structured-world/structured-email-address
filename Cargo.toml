@@ -1,0 +1,33 @@
+[package]
+name = "structured-email-address"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Structured World Foundation <foundation@sw.foundation>"]
+description = "RFC 5321/5322/6531 email address parser, validator, and normalizer. Subaddress extraction, provider-aware normalization, PSL domain validation, anti-homoglyph protection."
+documentation = "https://docs.rs/structured-email-address/"
+repository = "https://github.com/structured-world/structured-email-address"
+license = "MIT"
+readme = "README.md"
+keywords = ["email", "email-address", "validation", "rfc-5322", "normalization"]
+categories = ["parser-implementations", "text-processing"]
+
+[features]
+default = ["serde", "psl"]
+serde = ["dep:serde"]
+psl = ["dep:psl"]
+
+[dependencies]
+idna = "1.1"
+psl = { version = "2", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+unicode-normalization = "0.1"
+unicode-security = "0.1"
+
+[dev-dependencies]
+serde_json = "1"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
