@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use structured_email_address::{Config, EmailAddress, Strictness};
 
 fn bench_parse(c: &mut Criterion) {
@@ -45,9 +45,7 @@ fn bench_normalize(c: &mut Criterion) {
         .build();
 
     group.bench_function("gmail_full_pipeline", |b| {
-        b.iter(|| {
-            EmailAddress::parse_with(black_box("A.L.I.C.E+promo@Gmail.COM"), &gmail_config)
-        });
+        b.iter(|| EmailAddress::parse_with(black_box("A.L.I.C.E+promo@Gmail.COM"), &gmail_config));
     });
 
     let confusable_config = Config::builder()
@@ -70,9 +68,7 @@ fn bench_strictness(c: &mut Criterion) {
     let mut group = c.benchmark_group("strictness");
 
     let strict = Config::builder().strictness(Strictness::Strict).build();
-    let standard = Config::builder()
-        .strictness(Strictness::Standard)
-        .build();
+    let standard = Config::builder().strictness(Strictness::Standard).build();
     let lax = Config::builder().strictness(Strictness::Lax).build();
 
     let input = "user@example.com";
