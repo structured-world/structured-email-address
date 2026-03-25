@@ -503,12 +503,44 @@ fn skip_cfws(parser: &mut Parser<'_>, depth: usize) {
         return;
     }
     loop {
-        // Skip whitespace
-        while let Some(ch) = parser.peek() {
-            if is_wsp(ch) || ch == '\r' || ch == '\n' {
-                parser.advance();
-            } else {
-                break;
+        // Skip whitespace and RFC 5322 Folding White Space (CRLF + WSP).
+        loop {
+            match parser.peek() {
+                // Regular WSP (space / tab)
+                Some(ch) if is_wsp(ch) => {
+                    parser.advance();
+                }
+                // Potential FWS: CRLF followed by WSP
+                Some('\r') => {
+                    let pos = parser.pos;
+                    let bytes = parser.input.as_bytes();
+                    // Check for CRLF + WSP as per RFC 5322 FWS
+                    if pos + 2 < bytes.len()
+                        && bytes[pos] == b'\r'
+                        && bytes[pos + 1] == b'\n'
+                        && (bytes[pos + 2] == b' ' || bytes[pos + 2] == b'\t')
+                    {
+                        // Consume CRLF
+                        parser.advance(); // '\r'
+                        parser.advance(); // '\n'
+                        // Consume at least one following WSP, and any additional WSP
+                        while let Some(wch) = parser.peek() {
+                            if is_wsp(wch) {
+                                parser.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                    } else {
+                        // Bare CR is not valid FWS; stop treating as CFWS here.
+                        break;
+                    }
+                }
+                // Bare LF is not valid FWS; stop here.
+                Some('\n') => {
+                    break;
+                }
+                _ => break,
             }
         }
         // Try comment
@@ -600,7 +632,7 @@ fn is_dtext(ch: char) -> bool {
 
 /// Characters valid in a quoted-pair after `\`.
 fn is_quoted_pair_char(ch: char) -> bool {
-    is_printable_ascii(ch) || is_wsp(ch) || ch == '\0' || ch == '\r' || ch == '\n'
+    is_printable_ascii(ch) || is_wsp(ch) || is_utf8_non_ascii(ch)
 }
 
 fn is_printable_ascii(ch: char) -> bool {
