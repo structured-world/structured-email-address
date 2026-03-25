@@ -146,7 +146,10 @@ mod tests {
         let long_domain = format!("{}.com", "a".repeat(250));
         let input = format!("u@{long_domain}");
         let result: Result<crate::EmailAddress, _> = input.parse();
-        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err().kind(),
+            crate::ErrorKind::AddressTooLong { .. } | crate::ErrorKind::DomainLabelTooLong { .. }
+        ));
     }
 
     #[test]
