@@ -30,11 +30,12 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Normalized {
     let raw_domain = parsed.domain.as_str(parsed.input);
     let is_quoted = raw_local.starts_with('"') && raw_local.ends_with('"');
 
-    // Strip quotes from quoted-string local parts for normalization.
-    let unquoted_local = raw_local
-        .strip_prefix('"')
-        .and_then(|s| s.strip_suffix('"'))
-        .unwrap_or(raw_local);
+    // Strip quotes and unescape RFC quoted-pairs from quoted-string local parts.
+    let unquoted_local = if is_quoted {
+        unescape_quoted_string(&raw_local[1..raw_local.len() - 1])
+    } else {
+        raw_local.to_string()
+    };
 
     // Step 1: Unicode NFC normalization.
     let nfc_local: String = unquoted_local.nfc().collect();
@@ -124,6 +125,25 @@ fn is_gmail_domain(domain: &str) -> bool {
     matches!(domain, "gmail.com" | "googlemail.com")
 }
 
+/// Remove RFC 5322 quoted-pair backslashes: `\"` → `"`, `\\` → `\`, etc.
+fn unescape_quoted_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            // Consume the escaped character (or keep backslash if at end).
+            if let Some(escaped) = chars.next() {
+                out.push(escaped);
+            } else {
+                out.push(ch);
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 /// Compute confusable skeleton for anti-homoglyph protection.
 ///
 /// Two strings with the same skeleton are visually confusable.
@@ -208,6 +228,19 @@ mod tests {
         let latin = confusable_skeleton("alice");
         let cyrillic = confusable_skeleton("\u{0430}lice");
         assert_eq!(latin, cyrillic);
+    }
+
+    #[test]
+    fn quoted_local_unescapes_quoted_pairs() {
+        // RFC 5322 quoted-pairs: "a\ b" and "a b" are semantically equivalent.
+        let config = Config::default();
+        let n1 = parse_and_normalize("\"a\\ b\"@example.com", &config);
+        let n2 = parse_and_normalize("\"a b\"@example.com", &config);
+        assert_eq!(
+            n1.local_part, n2.local_part,
+            "quoted-pair backslash must be unescaped"
+        );
+        assert_eq!(n1.local_part, "a b");
     }
 
     #[test]

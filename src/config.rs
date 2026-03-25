@@ -179,7 +179,7 @@ impl ConfigBuilder {
         self
     }
 
-    /// Preserve original case.
+    /// Preserve original case for local part (domain is always lowercased per RFC 5321).
     pub fn preserve_case(mut self) -> Self {
         self.0.case_policy = CasePolicy::Preserve;
         self

@@ -199,25 +199,9 @@ fn try_parse_display_name(parser: &mut Parser<'_>) -> Option<Span> {
     // Quoted display name: "Name" <addr>
     if parser.peek() == Some('"') {
         let start = parser.pos;
-        parser.advance(); // consume opening "
-        loop {
-            match parser.peek() {
-                Some('"') => {
-                    parser.advance();
-                    break;
-                }
-                Some('\\') => {
-                    parser.advance();
-                    parser.advance(); // skip escaped char
-                }
-                Some(_) => {
-                    parser.advance();
-                }
-                None => {
-                    parser.restore(save);
-                    return None;
-                }
-            }
+        if parse_quoted_string(parser).is_err() {
+            parser.restore(save);
+            return None;
         }
         let end = parser.pos;
         skip_cfws(parser, 0);
@@ -265,18 +249,23 @@ fn try_parse_display_name(parser: &mut Parser<'_>) -> Option<Span> {
 /// Parse local-part: dot-atom / quoted-string / obs-local-part.
 fn parse_local_part(parser: &mut Parser<'_>, strictness: Strictness) -> Result<Span, Error> {
     let start = parser.pos;
+    let allow_obs = matches!(strictness, Strictness::Lax);
 
     // Reject quoted-string local parts in Strict mode (RFC 5321 envelope).
     if parser.peek() == Some('"') {
         if matches!(strictness, Strictness::Strict) {
             return Err(parser.error(ErrorKind::InvalidLocalPartChar { ch: '"' }));
         }
-        parse_quoted_string(parser)?;
-        return Ok(Span::new(start, parser.pos));
+        if !allow_obs {
+            // Standard mode: quoted-string is the entire local-part.
+            parse_quoted_string(parser)?;
+            return Ok(Span::new(start, parser.pos));
+        }
+        // Lax mode: fall through — obs-local-part allows quoted-string as first word,
+        // followed by optional "." word segments.
     }
 
     // dot-atom (or obs-local-part if Lax)
-    let allow_obs = matches!(strictness, Strictness::Lax);
     parse_dot_atom_local(parser, allow_obs)?;
 
     let end = parser.pos;
@@ -291,17 +280,14 @@ fn parse_local_part(parser: &mut Parser<'_>, strictness: Strictness) -> Result<S
 /// If `allow_obs` is true, allows CFWS between atoms (obs-local-part).
 // TODO: CFWS between atoms is included in the Span — strip it for clean semantics (#13)
 fn parse_dot_atom_local(parser: &mut Parser<'_>, allow_obs: bool) -> Result<(), Error> {
-    // First atom
-    if !eat_atext_run(parser) {
-        // Check for CFWS before first atom (obs)
-        if allow_obs {
-            skip_cfws(parser, 0);
-            if !eat_atext_run(parser) {
-                return Err(parser.error(ErrorKind::EmptyLocalPart));
-            }
-        } else {
+    // First word: atext-run, or (in obs mode) optional CFWS + atext-run or quoted-string.
+    if allow_obs {
+        skip_cfws(parser, 0);
+        if !eat_atext_run(parser) && !try_quoted_string(parser) {
             return Err(parser.error(ErrorKind::EmptyLocalPart));
         }
+    } else if !eat_atext_run(parser) {
+        return Err(parser.error(ErrorKind::EmptyLocalPart));
     }
 
     // Subsequent ".atom" segments
@@ -410,7 +396,7 @@ fn parse_domain(
         if !allow_domain_literal {
             return Err(parser.error(ErrorKind::InvalidDomainChar { ch: '[' }));
         }
-        parse_domain_literal(parser)?;
+        parse_domain_literal(parser, strictness)?;
         return Ok(Span::new(start, parser.pos));
     }
 
@@ -491,7 +477,7 @@ fn parse_domain_label(parser: &mut Parser<'_>) -> Result<(), Error> {
 }
 
 /// Parse domain literal: `[` dtext* `]`.
-fn parse_domain_literal(parser: &mut Parser<'_>) -> Result<(), Error> {
+fn parse_domain_literal(parser: &mut Parser<'_>, strictness: Strictness) -> Result<(), Error> {
     if !parser.eat('[') {
         return Err(parser.error(ErrorKind::UnterminatedDomainLiteral));
     }
@@ -501,6 +487,14 @@ fn parse_domain_literal(parser: &mut Parser<'_>) -> Result<(), Error> {
             Some(']') => {
                 parser.advance();
                 return Ok(());
+            }
+            // obs-dtext allows quoted-pair in Lax mode.
+            Some('\\') if matches!(strictness, Strictness::Lax) => {
+                parser.advance();
+                match parser.advance() {
+                    Some(ch) if is_quoted_pair_char(ch) => {}
+                    _ => return Err(parser.error(ErrorKind::InvalidQuotedPair)),
+                }
             }
             Some(ch) if is_dtext(ch) || is_wsp(ch) => {
                 parser.advance();
@@ -773,6 +767,17 @@ mod tests {
         let e = parse_err("user.@example.com");
         // Ensure this is treated as a local-part syntax error, not as a missing '@'.
         assert_ne!(e.kind(), &ErrorKind::MissingAtSign);
+    }
+
+    #[test]
+    fn obs_local_part_quoted_first_word() {
+        // obs-local-part: word *("." word), where word can be quoted-string.
+        // "a".b@example.com must parse in Lax mode.
+        let p = parse("\"a\".b@example.com", Strictness::Lax, false, false).unwrap_or_else(|e| {
+            panic!("Lax must accept obs-local-part starting with quoted word: {e}")
+        });
+        assert_eq!(p.local_part.as_str(p.input), "\"a\".b");
+        assert_eq!(p.domain.as_str(p.input), "example.com");
     }
 
     #[test]
