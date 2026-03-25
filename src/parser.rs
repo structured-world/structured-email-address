@@ -289,6 +289,7 @@ fn parse_local_part(parser: &mut Parser<'_>, strictness: Strictness) -> Result<S
 
 /// Parse dot-atom for local-part: `atext+ ("." atext+)*`.
 /// If `allow_obs` is true, allows CFWS between atoms (obs-local-part).
+// TODO: CFWS between atoms is included in the Span — strip it for clean semantics (#13)
 fn parse_dot_atom_local(parser: &mut Parser<'_>, allow_obs: bool) -> Result<(), Error> {
     // First atom
     if !eat_atext_run(parser) {
@@ -426,6 +427,7 @@ fn parse_domain(
 }
 
 /// Parse dot-atom for domain: `label ("." label)*` where label avoids leading/trailing hyphen.
+// TODO: CFWS between labels is included in the Span — strip it for clean semantics (#13)
 fn parse_dot_atom_domain(parser: &mut Parser<'_>, allow_obs: bool) -> Result<(), Error> {
     parse_domain_label(parser)?;
 
