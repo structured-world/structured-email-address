@@ -96,9 +96,7 @@ fn validate_tld(domain: &str, pos: usize) -> Result<(), Error> {
 /// PSL-based domain validation (requires `psl` feature).
 #[cfg(feature = "psl")]
 fn validate_psl(domain: &str, pos: usize) -> Result<(), Error> {
-    use psl::Psl;
-
-    match psl::List.suffix(domain.as_bytes()) {
+    match psl::suffix(domain.as_bytes()) {
         Some(suffix) if suffix.is_known() => Ok(()),
         _ => {
             let tld = domain.rsplit('.').next().unwrap_or(domain);
