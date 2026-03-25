@@ -88,7 +88,7 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normaliz
         })?
     };
 
-    // Step 8: Anti-homoglyph skeleton (optional).
+    // Step 7: Anti-homoglyph skeleton (optional).
     let skel = if config.check_confusables {
         Some(confusable_skeleton(&local_after_dots))
     } else {
