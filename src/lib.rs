@@ -148,6 +148,62 @@ impl EmailAddress {
     pub fn is_freemail(&self) -> bool {
         is_freemail_domain(&self.domain)
     }
+
+    /// Parse a batch of email addresses with the given configuration.
+    ///
+    /// Returns one `Result` per input, in the same order. The config is
+    /// shared across all inputs, amortizing setup cost.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use structured_email_address::{EmailAddress, Config};
+    ///
+    /// let config = Config::default();
+    /// let results = EmailAddress::parse_batch(
+    ///     &["alice@example.com", "invalid", "bob@example.org"],
+    ///     &config,
+    /// );
+    /// assert!(results[0].is_ok());
+    /// assert!(results[1].is_err());
+    /// assert!(results[2].is_ok());
+    /// ```
+    pub fn parse_batch(inputs: &[&str], config: &Config) -> Vec<Result<Self, Error>> {
+        inputs
+            .iter()
+            .map(|input| Self::parse_with(input, config))
+            .collect()
+    }
+
+    /// Parse a batch of email addresses in parallel using rayon.
+    ///
+    /// Same semantics as [`parse_batch`](Self::parse_batch), but distributes
+    /// work across rayon's thread pool. Useful for bulk import/validation of
+    /// large lists (10K+ addresses).
+    ///
+    /// Requires the `rayon` feature.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use structured_email_address::{EmailAddress, Config};
+    ///
+    /// let config = Config::default();
+    /// let results = EmailAddress::parse_batch_par(
+    ///     &["alice@example.com", "bob@example.org"],
+    ///     &config,
+    /// );
+    /// assert!(results.iter().all(|r| r.is_ok()));
+    /// ```
+    #[cfg(feature = "rayon")]
+    pub fn parse_batch_par(inputs: &[&str], config: &Config) -> Vec<Result<Self, Error>> {
+        use rayon::prelude::*;
+
+        inputs
+            .par_iter()
+            .map(|input| Self::parse_with(input, config))
+            .collect()
+    }
 }
 
 impl std::fmt::Display for EmailAddress {
@@ -444,5 +500,94 @@ mod tests {
         let email =
             EmailAddress::parse_with("user@localhost", &config).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(email.domain(), "localhost");
+    }
+
+    // ── Batch parsing ──
+
+    #[test]
+    fn batch_parse_mixed_results() {
+        // Verifies that parse_batch returns Ok for valid and Err for invalid
+        // inputs, preserving input order.
+        let config = Config::default();
+        let results = EmailAddress::parse_batch(
+            &["alice@example.com", "invalid", "bob@example.org"],
+            &config,
+        );
+        assert_eq!(results.len(), 3);
+        assert!(results[0].is_ok());
+        assert!(results[1].is_err());
+        assert!(results[2].is_ok());
+        assert_eq!(results[0].as_ref().map(|e| e.domain()), Ok("example.com"));
+        assert_eq!(results[2].as_ref().map(|e| e.domain()), Ok("example.org"));
+    }
+
+    #[test]
+    fn batch_parse_empty_input() {
+        // Empty slice returns empty vec.
+        let config = Config::default();
+        let results = EmailAddress::parse_batch(&[], &config);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn batch_parse_all_valid() {
+        // Batch of valid addresses all succeed.
+        let config = Config::default();
+        let inputs = &["a@b.com", "x@y.org", "test+tag@example.com"];
+        let results = EmailAddress::parse_batch(inputs, &config);
+        assert!(results.iter().all(|r| r.is_ok()));
+    }
+
+    #[test]
+    fn batch_parse_all_invalid() {
+        // Batch of invalid addresses all fail.
+        let config = Config::default();
+        let results = EmailAddress::parse_batch(&["", "noatsign", "@missing-local.com"], &config);
+        assert!(results.iter().all(|r| r.is_err()));
+    }
+
+    #[test]
+    fn batch_parse_with_config() {
+        // Batch parsing respects config (e.g., subaddress stripping).
+        let config = Config::builder()
+            .strip_subaddress()
+            .dots_gmail_only()
+            .lowercase_all()
+            .build();
+        let results =
+            EmailAddress::parse_batch(&["A.L.I.C.E+promo@Gmail.COM", "BOB@example.com"], &config);
+        assert_eq!(results.len(), 2);
+        assert_eq!(
+            results[0].as_ref().map(|e| e.canonical()),
+            Ok("alice@gmail.com".to_string())
+        );
+        assert_eq!(
+            results[1].as_ref().map(|e| e.canonical()),
+            Ok("bob@example.com".to_string())
+        );
+    }
+
+    #[cfg(feature = "rayon")]
+    #[test]
+    fn batch_par_matches_sequential() {
+        // Parallel variant produces identical results to sequential.
+        let config = Config::builder().strip_subaddress().lowercase_all().build();
+        let inputs = &[
+            "alice@example.com",
+            "invalid",
+            "BOB+tag@Example.ORG",
+            "",
+            "user@test.com",
+        ];
+        let seq = EmailAddress::parse_batch(inputs, &config);
+        let par = EmailAddress::parse_batch_par(inputs, &config);
+        assert_eq!(seq.len(), par.len());
+        for (i, (s, p)) in seq.iter().zip(par.iter()).enumerate() {
+            match (s, p) {
+                (Ok(a), Ok(b)) => assert_eq!(a, b, "result {i} diverges"),
+                (Err(a), Err(b)) => assert_eq!(a, b, "error {i} diverges: {a} vs {b}"),
+                _ => panic!("result {i}: one Ok, one Err"),
+            }
+        }
     }
 }

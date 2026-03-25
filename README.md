@@ -68,6 +68,45 @@ let email = EmailAddress::parse_with("John Doe <user@example.com>", &config)?;
 assert_eq!(email.display_name(), Some("John Doe"));
 ```
 
+## Batch Parsing
+
+Parse thousands of addresses in one call. Config is shared, results preserve input order:
+
+```rust
+use structured_email_address::{EmailAddress, Config};
+
+let config = Config::builder().strip_subaddress().lowercase_all().build();
+let results = EmailAddress::parse_batch(
+    &["alice@example.com", "invalid", "bob+tag@example.org"],
+    &config,
+);
+assert!(results[0].is_ok());
+assert!(results[1].is_err());
+assert!(results[2].is_ok());
+```
+
+For large lists (10K+), enable the `rayon` feature for parallel parsing:
+
+```toml
+structured-email-address = { version = "0.0.1", features = ["rayon"] }
+```
+
+```rust,ignore
+let results = EmailAddress::parse_batch_par(&huge_list, &config);
+```
+
+### Batch Benchmarks (baseline)
+
+100K emails (mix of valid + invalid), `strip_subaddress` + `dots_gmail_only` + `lowercase_all` config.
+Apple M1 Pro, Rust 1.85, `cargo bench --all-features`.
+
+| Variant | Time | Throughput |
+|---------|------|-----------|
+| `parse_batch` (sequential) | 49.1 ms | ~2.0M emails/sec |
+| `parse_batch_par` (rayon) | 9.6 ms | ~10.4M emails/sec |
+
+Rayon gives ~5x speedup on this workload.
+
 ## Strictness Levels
 
 | Level | Grammar | Use case |
@@ -82,6 +121,7 @@ assert_eq!(email.display_name(), Some("John Doe"));
 |---------|---------|-------------|
 | `serde` | Yes | Serialize/deserialize as canonical string |
 | `psl` | Yes | Domain validation against Public Suffix List |
+| `rayon` | No | Parallel batch parsing via `parse_batch_par()` |
 
 ```toml
 # Minimal (no serde, no PSL)

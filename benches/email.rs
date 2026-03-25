@@ -1,6 +1,38 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use structured_email_address::{Config, EmailAddress, Strictness};
 
+const BATCH_SIZE: usize = 100_000;
+
+fn batch_inputs() -> Vec<&'static str> {
+    let valid: &[&str] = &[
+        "alice@example.com",
+        "bob+tag@gmail.com",
+        "carol.smith@subdomain.example.co.uk",
+        "дмитрий@example.com",
+        "user@münchen.de",
+        "first.last@company.org",
+        "x@y.io",
+        "very.long.local.part@test.com",
+    ];
+    let invalid: &[&str] = &["", "noatsign", "@missing.com", "user@localhost"];
+
+    valid
+        .iter()
+        .chain(invalid.iter())
+        .copied()
+        .cycle()
+        .take(BATCH_SIZE)
+        .collect()
+}
+
+fn batch_config() -> Config {
+    Config::builder()
+        .strip_subaddress()
+        .dots_gmail_only()
+        .lowercase_all()
+        .build()
+}
+
 fn bench_parse(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse");
 
@@ -90,5 +122,70 @@ fn bench_strictness(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_parse, bench_normalize, bench_strictness);
+fn bench_batch(c: &mut Criterion) {
+    let mut group = c.benchmark_group("batch");
+    let inputs = batch_inputs();
+    let config = batch_config();
+
+    // black_box placement is symmetric: inputs + config opaqued once per iteration,
+    // results consumed via black_box to prevent dead-code elimination.
+    group.bench_function("sequential_100k", |b| {
+        b.iter(|| {
+            let results = EmailAddress::parse_batch(black_box(&inputs), black_box(&config));
+            black_box(results);
+        });
+    });
+
+    group.bench_function("loop_100k", |b| {
+        b.iter(|| {
+            let inputs_ref = black_box(&inputs);
+            let config_ref = black_box(&config);
+            let results: Vec<_> = inputs_ref
+                .iter()
+                .map(|input| EmailAddress::parse_with(input, config_ref))
+                .collect();
+            black_box(results);
+        });
+    });
+
+    group.finish();
+}
+
+#[cfg(feature = "rayon")]
+fn bench_batch_par(c: &mut Criterion) {
+    let mut group = c.benchmark_group("batch_parallel");
+    let inputs = batch_inputs();
+    let config = batch_config();
+
+    group.bench_function("parallel_100k", |b| {
+        b.iter(|| {
+            let results = EmailAddress::parse_batch_par(black_box(&inputs), black_box(&config));
+            black_box(results);
+        });
+    });
+
+    group.finish();
+}
+
+#[cfg(feature = "rayon")]
+criterion_group!(
+    benches,
+    bench_parse,
+    bench_normalize,
+    bench_strictness,
+    bench_batch,
+    bench_batch_par
+);
+#[cfg(feature = "rayon")]
+criterion_main!(benches);
+
+#[cfg(not(feature = "rayon"))]
+criterion_group!(
+    benches,
+    bench_parse,
+    bench_normalize,
+    bench_strictness,
+    bench_batch
+);
+#[cfg(not(feature = "rayon"))]
 criterion_main!(benches);
