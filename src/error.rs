@@ -42,6 +42,8 @@ pub enum ErrorKind {
     UnterminatedComment,
     /// Unterminated domain literal `[...]`.
     UnterminatedDomainLiteral,
+    /// IDNA encoding failed for domain.
+    IdnaError(String),
     /// Domain not in Public Suffix List (when PSL validation enabled).
     UnknownTld(String),
     /// Generic parse failure at position.
@@ -95,6 +97,7 @@ impl fmt::Display for Error {
             ErrorKind::InvalidQuotedPair => write!(f, "invalid quoted-pair escape"),
             ErrorKind::UnterminatedComment => write!(f, "unterminated comment"),
             ErrorKind::UnterminatedDomainLiteral => write!(f, "unterminated domain literal"),
+            ErrorKind::IdnaError(msg) => write!(f, "IDNA encoding failed: {msg}"),
             ErrorKind::UnknownTld(tld) => write!(f, "unknown TLD: .{tld}"),
             ErrorKind::Unexpected { ch } => {
                 write!(

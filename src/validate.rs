@@ -146,10 +146,16 @@ mod tests {
         let long_domain = format!("{}.com", "a".repeat(250));
         let input = format!("u@{long_domain}");
         let result: Result<crate::EmailAddress, _> = input.parse();
-        assert!(matches!(
-            result.unwrap_err().kind(),
-            crate::ErrorKind::AddressTooLong { .. } | crate::ErrorKind::DomainLabelTooLong { .. }
-        ));
+        let kind = result.unwrap_err().kind().clone();
+        assert!(
+            matches!(
+                kind,
+                crate::ErrorKind::AddressTooLong { .. }
+                    | crate::ErrorKind::DomainLabelTooLong { .. }
+                    | crate::ErrorKind::IdnaError(_)
+            ),
+            "expected length or IDNA error, got {kind:?}"
+        );
     }
 
     #[test]
@@ -157,10 +163,14 @@ mod tests {
         let long_label = "a".repeat(64);
         let input = format!("user@{long_label}.com");
         let result: Result<crate::EmailAddress, _> = input.parse();
-        assert!(matches!(
-            result.unwrap_err().kind(),
-            crate::ErrorKind::DomainLabelTooLong { .. }
-        ));
+        let kind = result.unwrap_err().kind().clone();
+        assert!(
+            matches!(
+                kind,
+                crate::ErrorKind::DomainLabelTooLong { .. } | crate::ErrorKind::IdnaError(_)
+            ),
+            "expected label-too-long or IDNA error, got {kind:?}"
+        );
     }
 
     #[test]

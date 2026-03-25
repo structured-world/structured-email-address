@@ -7,6 +7,7 @@ use unicode_normalization::UnicodeNormalization;
 use unicode_security::confusable_detection::skeleton;
 
 use crate::config::{CasePolicy, Config, DotPolicy, SubaddressPolicy};
+use crate::error::{Error, ErrorKind};
 use crate::parser::Parsed;
 
 /// Result of normalization: owned canonical parts.
@@ -25,7 +26,7 @@ pub(crate) struct Normalized {
 }
 
 /// Normalize a parsed email address according to the given config.
-pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Normalized {
+pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normalized, Error> {
     let raw_local = parsed.local_part.as_str(parsed.input);
     let raw_domain = parsed.domain.as_str(parsed.input);
     let is_quoted = raw_local.starts_with('"') && raw_local.ends_with('"');
@@ -74,13 +75,18 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Normalized {
     };
 
     // Step 6: Domain — IDNA encoding (punycode for international domains).
-    // IDNA can fail for legitimate Unicode domains that lack a punycode mapping
-    // (e.g., labels with non-IDNA2008 characters). Falling back to NFC lowercase
-    // preserves the domain in a usable canonical form rather than rejecting it.
-    // idna::domain_to_ascii() already produces lowercase ASCII; the fallback
-    // path lowercases explicitly. No second .to_lowercase() needed.
-    let canonical_domain =
-        idna::domain_to_ascii(&nfc_domain).unwrap_or_else(|_| nfc_domain.to_lowercase());
+    // Domain literals (e.g., [192.168.1.1]) are IP addresses, not hostnames — skip IDNA.
+    // Use strict mode: STD3 ASCII deny-list, hyphen checks, DNS length verification.
+    let canonical_domain = if nfc_domain.starts_with('[') {
+        nfc_domain.to_lowercase()
+    } else {
+        idna::domain_to_ascii_strict(&nfc_domain).map_err(|e| {
+            Error::new(
+                ErrorKind::IdnaError(format!("{}: {}", nfc_domain, e)),
+                parsed.domain.start,
+            )
+        })?
+    };
 
     // Step 8: Anti-homoglyph skeleton (optional).
     let skel = if config.check_confusables {
@@ -94,13 +100,13 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Normalized {
         .display_name
         .map(|span| span.as_str(parsed.input).to_string());
 
-    Normalized {
+    Ok(Normalized {
         local_part: local_after_dots,
         tag,
         domain: canonical_domain,
         display_name,
         skeleton: skel,
-    }
+    })
 }
 
 /// Apply dot-stripping policy.
@@ -166,7 +172,7 @@ mod tests {
             config.allow_domain_literal,
         )
         .unwrap_or_else(|e| panic!("parse failed for '{input}': {e}"));
-        normalize(&parsed, config)
+        normalize(&parsed, config).unwrap_or_else(|e| panic!("normalize failed for '{input}': {e}"))
     }
 
     #[test]
@@ -219,6 +225,32 @@ mod tests {
         let config = Config::default();
         let n = parse_and_normalize("user@münchen.de", &config);
         assert_eq!(n.domain, "xn--mnchen-3ya.de");
+    }
+
+    #[test]
+    fn idna_error_propagated() {
+        // Verify that IDNA encoding failure produces IdnaError.
+        // A label exceeding 63 bytes fails DNS length verification in strict mode.
+        use crate::parser::Span;
+        let long_label = "a".repeat(64);
+        let input = format!("user@{long_label}.com");
+        let config = Config::default();
+        let parsed = crate::parser::Parsed {
+            input: &input,
+            display_name: None,
+            local_part: Span { start: 0, end: 4 },
+            domain: Span {
+                start: 5,
+                end: input.len(),
+            },
+            comments: vec![],
+        };
+        let err = normalize(&parsed, &config).unwrap_err();
+        assert!(
+            matches!(err.kind(), ErrorKind::IdnaError(_)),
+            "expected IdnaError, got {:?}",
+            err.kind()
+        );
     }
 
     #[test]

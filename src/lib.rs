@@ -79,7 +79,7 @@ impl EmailAddress {
             config.allow_domain_literal,
         )?;
 
-        let normalized = normalize::normalize(&parsed, config);
+        let normalized = normalize::normalize(&parsed, config)?;
         validate::validate(&parsed, &normalized, config)?;
 
         Ok(Self {
