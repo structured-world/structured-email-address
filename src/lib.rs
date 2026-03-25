@@ -582,15 +582,11 @@ mod tests {
         let seq = EmailAddress::parse_batch(inputs, &config);
         let par = EmailAddress::parse_batch_par(inputs, &config);
         assert_eq!(seq.len(), par.len());
-        for (s, p) in seq.iter().zip(par.iter()) {
+        for (i, (s, p)) in seq.iter().zip(par.iter()).enumerate() {
             match (s, p) {
-                (Ok(a), Ok(b)) => assert_eq!(a.canonical(), b.canonical()),
-                (Err(a), Err(b)) => assert_eq!(
-                    std::mem::discriminant(a.kind()),
-                    std::mem::discriminant(b.kind()),
-                    "error kinds diverge: {a} vs {b}"
-                ),
-                _ => panic!("sequential and parallel results diverge"),
+                (Ok(a), Ok(b)) => assert_eq!(a, b, "result {i} diverges"),
+                (Err(a), Err(b)) => assert_eq!(a, b, "error {i} diverges: {a} vs {b}"),
+                _ => panic!("result {i}: one Ok, one Err"),
             }
         }
     }
