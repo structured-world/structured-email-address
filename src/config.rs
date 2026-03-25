@@ -52,7 +52,11 @@ pub enum DomainCheck {
     /// **Requires the `psl` feature.** Falls back to [`Tld`](Self::Tld) check
     /// when the `psl` feature is disabled.
     Psl,
-    /// Require at least a recognized TLD suffix.
+    /// Require that the final label is syntactically TLD-like.
+    ///
+    /// Checks that the last label is at least two ASCII alphabetic characters
+    /// (e.g., `com`, `net`). Does *not* verify against a real TLD list —
+    /// use [`Psl`](Self::Psl) for semantic validation.
     Tld,
 }
 
