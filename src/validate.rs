@@ -82,8 +82,8 @@ pub(crate) fn validate(
 /// Basic TLD validation: check the last label is at least 2 chars and all-alpha.
 fn validate_tld(domain: &str, pos: usize) -> Result<(), Error> {
     let tld = domain.rsplit('.').next().unwrap_or(domain);
-    // Punycode TLDs start with xn--
-    if tld.starts_with("xn--") {
+    // Punycode TLDs start with xn-- and must have content after the prefix.
+    if tld.starts_with("xn--") && tld.len() > 4 {
         return Ok(());
     }
     // TLD should be all-alpha and at least 2 chars.

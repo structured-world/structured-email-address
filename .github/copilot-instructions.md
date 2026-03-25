@@ -19,6 +19,6 @@ RFC 5321/5322/6531 email address parser, validator, and normalizer for Rust. Fea
 
 ## Testing Standards
 
-- RFC conformance: isEmail test suite (1226 edge cases) is the conformance baseline
+- RFC conformance: isEmail test suite (1226 edge cases) planned as conformance baseline (issue #2)
 - All normalization paths must have tests for edge cases (Unicode NFC, IDNA, confusables)
 - Feature-gated code must be tested both with and without the feature

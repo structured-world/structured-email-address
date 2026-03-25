@@ -48,8 +48,9 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Normalized {
     // Step 3: Extract subaddress tag.
     let sep = config.subaddress_separator;
     let (base_local, tag) = match cased_local.split_once(sep) {
-        Some((base, tag)) => (base.to_string(), Some(tag.to_string())),
-        None => (cased_local, None),
+        // Only extract tag if there's a non-empty base (e.g., "+tag" has empty base → no split).
+        Some((base, tag)) if !base.is_empty() => (base.to_string(), Some(tag.to_string())),
+        _ => (cased_local, None),
     };
 
     // Step 4: Apply subaddress policy to canonical form.
