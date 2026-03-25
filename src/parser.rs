@@ -315,9 +315,9 @@ fn parse_dot_atom_local(parser: &mut Parser<'_>, allow_obs: bool) -> Result<(), 
         if allow_obs {
             // In obs mode, allow either another atext run or a quoted-string segment.
             if !eat_atext_run(parser) && !try_quoted_string(parser) {
-                // Trailing dot or invalid — backtrack
-                parser.restore(save);
-                break;
+                // Trailing dot or invalid local-part after consuming '.' — report an error
+                // instead of backtracking and truncating the local-part.
+                return Err(parser.error(ErrorKind::EmptyLocalPart));
             }
         } else {
             // In standard mode, quoted-string after '.' is not allowed (no obs-local-part).
