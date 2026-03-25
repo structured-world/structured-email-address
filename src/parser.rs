@@ -163,7 +163,9 @@ pub(crate) fn parse(
     let domain = parse_domain(&mut parser, strictness, allow_domain_literal)?;
 
     if is_angle {
-        skip_cfws(&mut parser, 0);
+        if !matches!(strictness, Strictness::Strict) {
+            skip_cfws(&mut parser, 0);
+        }
         if !parser.eat('>') {
             return Err(parser.error(ErrorKind::Unexpected {
                 ch: parser.peek().unwrap_or('\0'),
@@ -171,8 +173,10 @@ pub(crate) fn parse(
         }
     }
 
-    // Skip trailing CFWS
-    skip_cfws(&mut parser, 0);
+    // Skip trailing CFWS (not in Strict mode — RFC 5321 forbids comments/CFWS).
+    if !matches!(strictness, Strictness::Strict) {
+        skip_cfws(&mut parser, 0);
+    }
 
     if !parser.at_end() {
         let ch = parser.peek().unwrap_or('\0');
@@ -533,7 +537,7 @@ fn skip_cfws(parser: &mut Parser<'_>, depth: usize) {
                         // Consume CRLF
                         parser.advance(); // '\r'
                         parser.advance(); // '\n'
-                        // Consume at least one following WSP, and any additional WSP
+                                          // Consume at least one following WSP, and any additional WSP
                         while let Some(wch) = parser.peek() {
                             if is_wsp(wch) {
                                 parser.advance();
@@ -820,6 +824,32 @@ mod tests {
         let p = parse("user@[192.168.1.1]", Strictness::Standard, false, true)
             .unwrap_or_else(|e| panic!("parse failed: {e}"));
         assert_eq!(p.domain.as_str(p.input), "[192.168.1.1]");
+    }
+
+    #[test]
+    fn strict_rejects_trailing_comment() {
+        // RFC 5321 Strict mode must not accept trailing comments/CFWS.
+        let e = parse(
+            "user@example.com (comment)",
+            Strictness::Strict,
+            false,
+            false,
+        )
+        .expect_err("Strict mode must reject trailing comment");
+        assert!(matches!(e.kind(), ErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn strict_rejects_trailing_cfws_in_angle() {
+        // Trailing CFWS between domain and '>' in Strict mode.
+        let e = parse(
+            "<user@example.com (comment)>",
+            Strictness::Strict,
+            false,
+            false,
+        )
+        .expect_err("Strict mode must reject CFWS before closing angle bracket");
+        assert!(matches!(e.kind(), ErrorKind::Unexpected { .. }));
     }
 
     #[test]

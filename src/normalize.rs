@@ -28,6 +28,7 @@ pub(crate) struct Normalized {
 pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Normalized {
     let raw_local = parsed.local_part.as_str(parsed.input);
     let raw_domain = parsed.domain.as_str(parsed.input);
+    let is_quoted = raw_local.starts_with('"') && raw_local.ends_with('"');
 
     // Strip quotes from quoted-string local parts for normalization.
     let unquoted_local = raw_local
@@ -45,25 +46,31 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Normalized {
         CasePolicy::Domain | CasePolicy::Preserve => nfc_local,
     };
 
-    // Step 3: Extract subaddress tag.
-    let sep = config.subaddress_separator;
-    let (base_local, tag) = match cased_local.split_once(sep) {
-        // Only extract tag if there's a non-empty base (e.g., "+tag" has empty base → no split).
-        Some((base, tag)) if !base.is_empty() => (base.to_string(), Some(tag.to_string())),
-        _ => (cased_local, None),
-    };
+    // Steps 3-5: Subaddress and dot normalization apply only to unquoted local-parts.
+    // Inside a quoted-string, '+' and '.' are literal characters, not provider semantics.
+    let (_base_local, tag, local_after_dots) = if is_quoted {
+        (cased_local.clone(), None, cased_local)
+    } else {
+        // Step 3: Extract subaddress tag.
+        let sep = config.subaddress_separator;
+        let (base, tag) = match cased_local.split_once(sep) {
+            Some((base, tag)) if !base.is_empty() => (base.to_string(), Some(tag.to_string())),
+            _ => (cased_local, None),
+        };
 
-    // Step 4: Apply subaddress policy to canonical form.
-    let local_after_tag = match config.subaddress {
-        SubaddressPolicy::Strip => base_local.clone(),
-        SubaddressPolicy::Preserve => match &tag {
-            Some(t) => format!("{}{}{}", base_local, sep, t),
-            None => base_local.clone(),
-        },
-    };
+        // Step 4: Apply subaddress policy to canonical form.
+        let local_after_tag = match config.subaddress {
+            SubaddressPolicy::Strip => base.clone(),
+            SubaddressPolicy::Preserve => match &tag {
+                Some(t) => format!("{}{}{}", base, sep, t),
+                None => base.clone(),
+            },
+        };
 
-    // Step 5: Dot policy.
-    let local_after_dots = apply_dot_policy(&local_after_tag, &nfc_domain, config.dot_policy);
+        // Step 5: Dot policy.
+        let after_dots = apply_dot_policy(&local_after_tag, &nfc_domain, config.dot_policy);
+        (base, tag, after_dots)
+    };
 
     // Step 6: Domain — IDNA encoding (punycode for international domains).
     // IDNA can fail for legitimate Unicode domains that lack a punycode mapping
@@ -201,6 +208,30 @@ mod tests {
         let latin = confusable_skeleton("alice");
         let cyrillic = confusable_skeleton("\u{0430}lice");
         assert_eq!(latin, cyrillic);
+    }
+
+    #[test]
+    fn quoted_local_preserves_plus_and_dots() {
+        // Quoted-string locals: literal '+' and '.' are NOT provider semantics.
+        // "a+b"@example.com is a distinct mailbox — subaddress extraction must NOT split on '+'.
+        let config = Config::builder()
+            .strip_subaddress()
+            .dots_gmail_only()
+            .lowercase_all()
+            .build();
+        let n = parse_and_normalize("\"a+b\"@gmail.com", &config);
+        assert_eq!(
+            n.local_part, "a+b",
+            "subaddress must not split inside quoted local"
+        );
+        assert_eq!(n.tag, None, "no tag extraction for quoted local");
+
+        // Dots inside quoted local must not be stripped even for Gmail.
+        let n = parse_and_normalize("\"a.b\"@gmail.com", &config);
+        assert_eq!(
+            n.local_part, "a.b",
+            "dots must not be stripped inside quoted local"
+        );
     }
 
     #[test]

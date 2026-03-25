@@ -37,7 +37,7 @@ pub enum CasePolicy {
     Domain,
     /// Lowercase both local part and domain. Most providers are case-insensitive.
     All,
-    /// Preserve original case everywhere.
+    /// Preserve original case for local part (domain is always lowercased per RFC 5321).
     Preserve,
 }
 
