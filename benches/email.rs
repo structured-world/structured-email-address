@@ -126,10 +126,11 @@ fn bench_batch(c: &mut Criterion) {
     // Sequential loop (baseline comparison)
     group.bench_function("loop_100k", |b| {
         b.iter(|| {
-            let _results: Vec<_> = inputs
+            let results: Vec<_> = inputs
                 .iter()
                 .map(|input| EmailAddress::parse_with(black_box(input), &config))
                 .collect();
+            black_box(results);
         });
     });
 

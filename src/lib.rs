@@ -585,7 +585,11 @@ mod tests {
         for (s, p) in seq.iter().zip(par.iter()) {
             match (s, p) {
                 (Ok(a), Ok(b)) => assert_eq!(a.canonical(), b.canonical()),
-                (Err(_), Err(_)) => {} // both failed — ok
+                (Err(a), Err(b)) => assert_eq!(
+                    std::mem::discriminant(a.kind()),
+                    std::mem::discriminant(b.kind()),
+                    "error kinds diverge: {a} vs {b}"
+                ),
                 _ => panic!("sequential and parallel results diverge"),
             }
         }
