@@ -30,11 +30,10 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Normalized {
     let raw_domain = parsed.domain.as_str(parsed.input);
 
     // Strip quotes from quoted-string local parts for normalization.
-    let unquoted_local = if raw_local.starts_with('"') && raw_local.ends_with('"') {
-        &raw_local[1..raw_local.len() - 1]
-    } else {
-        raw_local
-    };
+    let unquoted_local = raw_local
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .unwrap_or(raw_local);
 
     // Step 1: Unicode NFC normalization.
     let nfc_local: String = unquoted_local.nfc().collect();
@@ -66,6 +65,9 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Normalized {
     let local_after_dots = apply_dot_policy(&local_after_tag, &nfc_domain, config.dot_policy);
 
     // Step 6: Domain — IDNA encoding (punycode for international domains).
+    // IDNA can fail for legitimate Unicode domains that lack a punycode mapping
+    // (e.g., labels with non-IDNA2008 characters). Falling back to NFC lowercase
+    // preserves the domain in a usable canonical form rather than rejecting it.
     let canonical_domain =
         idna::domain_to_ascii(&nfc_domain).unwrap_or_else(|_| nfc_domain.to_lowercase());
 

@@ -47,7 +47,10 @@ pub enum DomainCheck {
     /// No domain validation beyond RFC syntax.
     #[default]
     Syntax,
-    /// Validate against Public Suffix List (requires `psl` feature).
+    /// Validate against Public Suffix List.
+    ///
+    /// **Requires the `psl` feature.** Falls back to [`Tld`](Self::Tld) check
+    /// when the `psl` feature is disabled.
     Psl,
     /// Require at least a recognized TLD suffix.
     Tld,

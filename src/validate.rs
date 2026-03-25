@@ -21,21 +21,30 @@ pub(crate) fn validate(
     normalized: &Normalized,
     config: &Config,
 ) -> Result<(), Error> {
-    let local = &normalized.local_part;
     let domain = &normalized.domain;
 
-    // Length: local part.
-    if local.len() > MAX_LOCAL_PART_LEN {
+    // Length limits apply to the RAW addr-spec (RFC 5321 §4.5.3.1),
+    // not the normalized form (which may be shorter after tag/dot stripping).
+    let raw_local = parsed.local_part.as_str(parsed.input);
+    let raw_domain = parsed.domain.as_str(parsed.input);
+
+    // Length: local part (max 64 octets).
+    if raw_local.len() > MAX_LOCAL_PART_LEN {
         return Err(Error::new(
-            ErrorKind::LocalPartTooLong { len: local.len() },
+            ErrorKind::LocalPartTooLong {
+                len: raw_local.len(),
+            },
             parsed.local_part.start,
         ));
     }
 
-    // Length: total address (local + @ + domain).
-    let total = local.len() + 1 + domain.len();
+    // Length: total address (max 254 octets).
+    let total = raw_local.len() + 1 + raw_domain.len();
     if total > MAX_ADDRESS_LEN {
-        return Err(Error::new(ErrorKind::AddressTooLong { len: total }, 0));
+        return Err(Error::new(
+            ErrorKind::AddressTooLong { len: total },
+            parsed.local_part.start,
+        ));
     }
 
     // Domain label lengths.
@@ -60,11 +69,14 @@ pub(crate) fn validate(
         }
     }
 
-    // Domain check policy.
-    match config.domain_check {
-        DomainCheck::Syntax => {}
-        DomainCheck::Tld => validate_tld(domain, parsed.domain.start)?,
-        DomainCheck::Psl => validate_psl(domain, parsed.domain.start)?,
+    // Domain check policy (domain literals bypass TLD/PSL validation).
+    let is_domain_literal = parsed.domain.as_str(parsed.input).starts_with('[');
+    if !is_domain_literal {
+        match config.domain_check {
+            DomainCheck::Syntax => {}
+            DomainCheck::Tld => validate_tld(domain, parsed.domain.start)?,
+            DomainCheck::Psl => validate_psl(domain, parsed.domain.start)?,
+        }
     }
 
     Ok(())

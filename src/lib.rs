@@ -142,10 +142,39 @@ impl EmailAddress {
 impl std::fmt::Display for EmailAddress {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.display_name {
-            Some(name) => write!(f, "\"{}\" <{}@{}>", name, self.local_part, self.domain),
+            Some(name) => write!(
+                f,
+                "\"{}\" <{}@{}>",
+                escape_display_name(name),
+                self.local_part,
+                self.domain
+            ),
             None => write!(f, "{}@{}", self.local_part, self.domain),
         }
     }
+}
+
+/// Escape a display name for safe inclusion in a quoted string.
+///
+/// Backslash-escapes `"` and `\`, and strips bare CR/LF to prevent
+/// header injection in serialized output.
+fn escape_display_name(name: &str) -> String {
+    let mut escaped = String::with_capacity(name.len());
+    for ch in name.chars() {
+        match ch {
+            '"' => {
+                escaped.push('\\');
+                escaped.push('"');
+            }
+            '\\' => {
+                escaped.push('\\');
+                escaped.push('\\');
+            }
+            '\r' | '\n' => {} // strip CRLF
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 impl PartialEq for EmailAddress {

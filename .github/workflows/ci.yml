@@ -36,14 +36,11 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        rust: [stable, "1.85"]
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: ${{ runner.os }}-cargo
@@ -53,6 +50,36 @@ jobs:
         run: cargo test --no-default-features
       - name: Doc tests
         run: cargo test --doc --all-features
+
+  cross-i686:
+    needs: lint
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-unknown-linux-gnu
+      - name: Install 32-bit libs
+        run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: cross-i686
+      - name: Test (i686)
+        run: cargo test --all-features --target i686-unknown-linux-gnu
+
+  msrv:
+    needs: lint
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.85
+      - uses: Swatinem/rust-cache@v2
+      - name: Test (all features)
+        run: cargo test --all-features
+      - name: Test (no default features)
+        run: cargo test --no-default-features
 
   codecov:
     needs: lint

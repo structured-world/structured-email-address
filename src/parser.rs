@@ -142,7 +142,9 @@ pub(crate) fn parse(
         // Skip optional CFWS before <
         skip_cfws(&mut parser, 0);
         if !parser.eat('<') {
-            return Err(parser.error(ErrorKind::MissingAtSign));
+            return Err(parser.error(ErrorKind::Unexpected {
+                ch: parser.peek().unwrap_or('\0'),
+            }));
         }
     }
 
@@ -232,6 +234,11 @@ fn try_parse_display_name(parser: &mut Parser<'_>) -> Option<Span> {
                 parser.restore(save);
                 return None;
             }
+            Some(ch) if ch < '\u{20}' && ch != '\t' => {
+                // Control characters are not valid in display names.
+                parser.restore(save);
+                return None;
+            }
             Some(_) => {
                 found_content = true;
                 parser.advance();
@@ -248,8 +255,11 @@ fn try_parse_display_name(parser: &mut Parser<'_>) -> Option<Span> {
 fn parse_local_part(parser: &mut Parser<'_>, strictness: Strictness) -> Result<Span, Error> {
     let start = parser.pos;
 
-    // Try quoted-string first
+    // Reject quoted-string local parts in Strict mode (RFC 5321 envelope).
     if parser.peek() == Some('"') {
+        if matches!(strictness, Strictness::Strict) {
+            return Err(parser.error(ErrorKind::InvalidLocalPartChar { ch: '"' }));
+        }
         parse_quoted_string(parser)?;
         return Ok(Span::new(start, parser.pos));
     }
@@ -447,11 +457,7 @@ fn parse_domain_label(parser: &mut Parser<'_>) -> Result<(), Error> {
     }
 
     if last_was_hyphen {
-        // Backtrack: trailing hyphens are not allowed
-        // Move pos back past all trailing hyphens
-        while parser.pos > start && parser.input.as_bytes()[parser.pos - 1] == b'-' {
-            parser.pos -= 1;
-        }
+        return Err(parser.error(ErrorKind::DomainLabelHyphen));
     }
 
     if parser.pos == start {
