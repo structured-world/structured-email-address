@@ -127,15 +127,22 @@ fn bench_batch(c: &mut Criterion) {
     let inputs = batch_inputs();
     let config = batch_config();
 
+    // black_box placement is symmetric: inputs + config opaqued once per iteration,
+    // results consumed via black_box to prevent dead-code elimination.
     group.bench_function("sequential_100k", |b| {
-        b.iter(|| EmailAddress::parse_batch(black_box(&inputs), black_box(&config)));
+        b.iter(|| {
+            let results = EmailAddress::parse_batch(black_box(&inputs), black_box(&config));
+            black_box(results);
+        });
     });
 
     group.bench_function("loop_100k", |b| {
         b.iter(|| {
-            let results: Vec<_> = inputs
+            let inputs_ref = black_box(&inputs);
+            let config_ref = black_box(&config);
+            let results: Vec<_> = inputs_ref
                 .iter()
-                .map(|input| EmailAddress::parse_with(black_box(input), &config))
+                .map(|input| EmailAddress::parse_with(input, config_ref))
                 .collect();
             black_box(results);
         });
@@ -151,7 +158,10 @@ fn bench_batch_par(c: &mut Criterion) {
     let config = batch_config();
 
     group.bench_function("parallel_100k", |b| {
-        b.iter(|| EmailAddress::parse_batch_par(black_box(&inputs), black_box(&config)));
+        b.iter(|| {
+            let results = EmailAddress::parse_batch_par(black_box(&inputs), black_box(&config));
+            black_box(results);
+        });
     });
 
     group.finish();
