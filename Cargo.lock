@@ -547,6 +547,7 @@ dependencies = [
  "criterion",
  "idna",
  "psl",
+ "rayon",
  "serde",
  "serde_json",
  "unicode-normalization",
