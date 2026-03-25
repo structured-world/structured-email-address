@@ -170,8 +170,6 @@ impl std::fmt::Display for EmailAddress {
     }
 }
 
-/// Escape a display name for safe inclusion in a quoted string.
-///
 /// Check if a local-part needs quoting for RFC 5321/5322 serialization.
 /// Returns true if the local part contains characters outside of atext.
 fn needs_quoting(local: &str) -> bool {
