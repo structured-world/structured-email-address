@@ -312,10 +312,20 @@ fn parse_dot_atom_local(parser: &mut Parser<'_>, allow_obs: bool) -> Result<(), 
         if allow_obs {
             skip_cfws(parser, 0);
         }
-        if !eat_atext_run(parser) && !try_quoted_string(parser) {
-            // Trailing dot or invalid — backtrack
-            parser.restore(save);
-            break;
+        if allow_obs {
+            // In obs mode, allow either another atext run or a quoted-string segment.
+            if !eat_atext_run(parser) && !try_quoted_string(parser) {
+                // Trailing dot or invalid — backtrack
+                parser.restore(save);
+                break;
+            }
+        } else {
+            // In standard mode, quoted-string after '.' is not allowed (no obs-local-part).
+            if !eat_atext_run(parser) {
+                // Trailing dot: "." must be followed by another atom/quoted-string.
+                // Report an explicit local-part error instead of backtracking and truncating.
+                return Err(parser.error(ErrorKind::EmptyLocalPart));
+            }
         }
     }
 
@@ -546,9 +556,18 @@ fn skip_cfws(parser: &mut Parser<'_>, depth: usize) {
         // Try comment
         if parser.peek() == Some('(') {
             let comment_start = parser.pos;
-            if parse_comment(parser, depth).is_ok() {
-                parser.comments.push(Span::new(comment_start, parser.pos));
-                continue;
+            match parse_comment(parser, depth) {
+                Ok(()) => {
+                    parser.comments.push(Span::new(comment_start, parser.pos));
+                    continue;
+                }
+                Err(_) => {
+                    // Restore parser position so the caller can handle the '(' and
+                    // any following characters as part of normal parsing.
+                    parser.pos = comment_start;
+                    // Do not attempt to parse this as CFWS again.
+                    break;
+                }
             }
         }
         break;
@@ -739,6 +758,31 @@ mod tests {
     fn empty_domain() {
         let e = parse_err("user@");
         assert_eq!(e.kind(), &ErrorKind::EmptyDomain);
+    }
+
+    // ── Dot-atom edge cases ──
+
+    #[test]
+    fn trailing_dot_in_local_part_is_not_missing_at_sign() {
+        let e = parse_err("user.@example.com");
+        // Ensure this is treated as a local-part syntax error, not as a missing '@'.
+        assert_ne!(e.kind(), &ErrorKind::MissingAtSign);
+    }
+
+    #[test]
+    fn obs_local_part_rejected_in_standard() {
+        let e = parse("a.\"b\"@example.com", Strictness::Standard, false, false)
+            .expect_err("expected obs-local-part to be rejected in Standard strictness");
+        // Should fail due to local-part syntax, not due to a missing '@'.
+        assert_ne!(e.kind(), &ErrorKind::MissingAtSign);
+    }
+
+    #[test]
+    fn obs_local_part_accepted_in_lax() {
+        let p = parse("a.\"b\"@example.com", Strictness::Lax, false, false)
+            .unwrap_or_else(|e| panic!("parse failed in Lax strictness: {e}"));
+        assert_eq!(p.local_part.as_str(p.input), "a.\"b\"");
+        assert_eq!(p.domain.as_str(p.input), "example.com");
     }
 
     // ── Display name ──
