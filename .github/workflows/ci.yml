@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy (all features)
+        run: cargo clippy --all-features -- -D warnings
+      - name: Clippy (no default features)
+        run: cargo clippy --no-default-features -- -D warnings
+
+  test:
+    needs: lint
+    timeout-minutes: 15
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@nextest
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ runner.os }}-cargo
+      - name: Test (all features)
+        run: cargo nextest run --profile ci --all-features
+      - name: Test (no default features)
+        run: cargo nextest run --profile ci --no-default-features
+      - name: Doc tests
+        run: cargo test --doc --all-features
+
+  cross-i686:
+    needs: lint
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-unknown-linux-gnu
+      - uses: taiki-e/install-action@nextest
+      - name: Install 32-bit libs
+        run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: cross-i686
+      - name: Test (i686)
+        run: cargo nextest run --profile ci --all-features --target i686-unknown-linux-gnu
+
+  msrv:
+    needs: lint
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.85
+      - uses: taiki-e/install-action@nextest
+      - uses: Swatinem/rust-cache@v2
+      - name: Test (all features)
+        run: cargo nextest run --profile ci --all-features
+      - name: Test (no default features)
+        run: cargo nextest run --profile ci --no-default-features
+
+  codecov:
+    needs: lint
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: cargo llvm-cov --all-features --lcov --output-path lcov.info
+      - uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  bench:
+    needs: lint
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: bench
+      - name: Run benchmarks
+        run: cargo bench --all-features -- --output-format bencher | tee bench-output.txt
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: |
+            bench-output.txt
+            target/criterion/
