@@ -47,17 +47,13 @@ pub(crate) fn validate(
         ));
     }
 
-    // Domain must have at least one dot (unless configured otherwise).
-    if config.require_tld_dot && !domain.contains('.') {
-        let raw_domain = parsed.domain.as_str(parsed.input);
-        // Domain literals like [192.168.1.1] are exempt.
-        if !raw_domain.starts_with('[') {
-            return Err(Error::new(ErrorKind::DomainNoDot, parsed.domain.start));
-        }
-    }
+    // Domain literals like [192.168.1.1] get special handling below.
+    let is_domain_literal = raw_domain.starts_with('[');
 
-    // Domain check policy (domain literals bypass TLD/PSL validation).
-    let is_domain_literal = parsed.domain.as_str(parsed.input).starts_with('[');
+    // Domain must have at least one dot (unless configured otherwise).
+    if config.require_tld_dot && !domain.contains('.') && !is_domain_literal {
+        return Err(Error::new(ErrorKind::DomainNoDot, parsed.domain.start));
+    }
     if !is_domain_literal {
         // Domain label length check only applies to hostnames, not domain literals
         // like [192.168.1.1] where splitting on '.' produces invalid labels.

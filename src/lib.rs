@@ -348,6 +348,19 @@ mod tests {
     }
 
     #[test]
+    fn display_name_escaping() {
+        let config = Config::builder().allow_display_name().build();
+        // Display name with quotes should be escaped
+        let email = EmailAddress::parse_with("John \"Johnny\" Doe <user@example.com>", &config)
+            .unwrap_or_else(|e| panic!("{e}"));
+        let formatted = format!("{email}");
+        assert!(
+            formatted.contains("\\\"Johnny\\\""),
+            "Expected escaped quotes in: {formatted}"
+        );
+    }
+
+    #[test]
     fn equality_by_canonical() {
         let a: EmailAddress = "user@example.com".parse().unwrap_or_else(|e| panic!("{e}"));
         let b: EmailAddress = "user@Example.COM".parse().unwrap_or_else(|e| panic!("{e}"));

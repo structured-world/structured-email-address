@@ -221,6 +221,12 @@ impl ConfigBuilder {
         self
     }
 
+    /// Syntax-only domain check (default). Resets from `Psl`/`Tld` back to syntax.
+    pub fn domain_check_syntax(mut self) -> Self {
+        self.0.domain_check = DomainCheck::Syntax;
+        self
+    }
+
     /// Build the config.
     pub fn build(self) -> Config {
         self.0

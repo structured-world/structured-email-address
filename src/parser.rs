@@ -573,7 +573,10 @@ fn parse_comment(parser: &mut Parser<'_>, depth: usize) -> Result<(), Error> {
             }
             Some('\\') => {
                 parser.advance();
-                parser.advance(); // quoted-pair in comment
+                match parser.advance() {
+                    Some(ch) if is_quoted_pair_char(ch) => {}
+                    _ => return Err(parser.error(ErrorKind::InvalidQuotedPair)),
+                }
             }
             Some(ch) if is_ctext(ch) || is_wsp(ch) => {
                 parser.advance();
