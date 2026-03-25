@@ -5,7 +5,7 @@ RFC 5321/5322/6531 conformant email address parser, validator, and normalizer fo
 [![CI](https://github.com/structured-world/structured-email-address/actions/workflows/ci.yml/badge.svg)](https://github.com/structured-world/structured-email-address/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/structured-email-address.svg)](https://crates.io/crates/structured-email-address)
 [![docs.rs](https://docs.rs/structured-email-address/badge.svg)](https://docs.rs/structured-email-address)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 ## What makes this different?
 
@@ -114,4 +114,4 @@ USDT (TRC-20): `TFDsezHa1cBkoeZT5q2T49Wp66K8t2DmdA`
 
 ## License
 
-MIT
+Apache License 2.0
