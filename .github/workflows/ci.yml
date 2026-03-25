@@ -33,6 +33,8 @@ jobs:
   test:
     needs: lint
     timeout-minutes: 15
+    permissions:
+      checks: write
     strategy:
       fail-fast: true
       matrix:
@@ -41,45 +43,70 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: ${{ runner.os }}-cargo
       - name: Test (all features)
-        run: cargo test --all-features
+        run: cargo nextest run --profile ci --all-features
       - name: Test (no default features)
-        run: cargo test --no-default-features
+        run: cargo nextest run --profile ci --no-default-features
       - name: Doc tests
         run: cargo test --doc --all-features
+      - name: Publish test results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always() && runner.os == 'Linux'
+        with:
+          files: target/nextest/ci/junit.xml
+          check_name: Test Results (${{ matrix.os }})
 
   cross-i686:
     needs: lint
     timeout-minutes: 15
+    permissions:
+      checks: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: i686-unknown-linux-gnu
+      - uses: taiki-e/install-action@nextest
       - name: Install 32-bit libs
         run: sudo apt-get update && sudo apt-get install -y gcc-multilib
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: cross-i686
       - name: Test (i686)
-        run: cargo test --all-features --target i686-unknown-linux-gnu
+        run: cargo nextest run --profile ci --all-features --target i686-unknown-linux-gnu
+      - name: Publish test results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: target/nextest/ci/junit.xml
+          check_name: Test Results (cross-i686)
 
   msrv:
     needs: lint
     timeout-minutes: 15
+    permissions:
+      checks: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.85
+      - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
       - name: Test (all features)
-        run: cargo test --all-features
+        run: cargo nextest run --profile ci --all-features
       - name: Test (no default features)
-        run: cargo test --no-default-features
+        run: cargo nextest run --profile ci --no-default-features
+      - name: Publish test results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: target/nextest/ci/junit.xml
+          check_name: Test Results (msrv)
 
   codecov:
     needs: lint
