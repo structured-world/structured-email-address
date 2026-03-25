@@ -150,8 +150,15 @@ pub(crate) fn parse(
 
     // Parse addr-spec: local-part "@" domain
     let local_part = parse_local_part(&mut parser, strictness)?;
+    // RFC 5322 allows CFWS around "@" in Standard/Lax modes.
+    if !matches!(strictness, Strictness::Strict) {
+        skip_cfws(&mut parser, 0);
+    }
     if !parser.eat('@') {
         return Err(parser.error(ErrorKind::MissingAtSign));
+    }
+    if !matches!(strictness, Strictness::Strict) {
+        skip_cfws(&mut parser, 0);
     }
     let domain = parse_domain(&mut parser, strictness, allow_domain_literal)?;
 
