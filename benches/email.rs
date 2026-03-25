@@ -1,6 +1,38 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use structured_email_address::{Config, EmailAddress, Strictness};
 
+const BATCH_SIZE: usize = 100_000;
+
+fn batch_inputs() -> Vec<&'static str> {
+    let valid: &[&str] = &[
+        "alice@example.com",
+        "bob+tag@gmail.com",
+        "carol.smith@subdomain.example.co.uk",
+        "дмитрий@example.com",
+        "user@münchen.de",
+        "first.last@company.org",
+        "x@y.io",
+        "very.long.local.part@test.com",
+    ];
+    let invalid: &[&str] = &["", "noatsign", "@missing.com", "user@localhost"];
+
+    valid
+        .iter()
+        .chain(invalid.iter())
+        .copied()
+        .cycle()
+        .take(BATCH_SIZE)
+        .collect()
+}
+
+fn batch_config() -> Config {
+    Config::builder()
+        .strip_subaddress()
+        .dots_gmail_only()
+        .lowercase_all()
+        .build()
+}
+
 fn bench_parse(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse");
 
@@ -92,38 +124,13 @@ fn bench_strictness(c: &mut Criterion) {
 
 fn bench_batch(c: &mut Criterion) {
     let mut group = c.benchmark_group("batch");
+    let inputs = batch_inputs();
+    let config = batch_config();
 
-    // Build a 100K-element list: mix of valid and invalid addresses
-    let valid = [
-        "alice@example.com",
-        "bob+tag@gmail.com",
-        "carol.smith@subdomain.example.co.uk",
-        "дмитрий@example.com",
-        "user@münchen.de",
-        "first.last@company.org",
-        "x@y.io",
-        "very.long.local.part@test.com",
-    ];
-    let invalid = ["", "noatsign", "@missing.com", "user@localhost"];
-
-    let mut inputs: Vec<&str> = Vec::with_capacity(100_000);
-    let all: Vec<&str> = valid.iter().chain(invalid.iter()).copied().collect();
-    for chunk in all.iter().cycle().take(100_000) {
-        inputs.push(chunk);
-    }
-
-    let config = Config::builder()
-        .strip_subaddress()
-        .dots_gmail_only()
-        .lowercase_all()
-        .build();
-
-    // Sequential: parse_batch on 100K emails
     group.bench_function("sequential_100k", |b| {
         b.iter(|| EmailAddress::parse_batch(black_box(&inputs), black_box(&config)));
     });
 
-    // Sequential loop (baseline comparison)
     group.bench_function("loop_100k", |b| {
         b.iter(|| {
             let results: Vec<_> = inputs
@@ -140,30 +147,8 @@ fn bench_batch(c: &mut Criterion) {
 #[cfg(feature = "rayon")]
 fn bench_batch_par(c: &mut Criterion) {
     let mut group = c.benchmark_group("batch_parallel");
-
-    let valid = [
-        "alice@example.com",
-        "bob+tag@gmail.com",
-        "carol.smith@subdomain.example.co.uk",
-        "дмитрий@example.com",
-        "user@münchen.de",
-        "first.last@company.org",
-        "x@y.io",
-        "very.long.local.part@test.com",
-    ];
-    let invalid = ["", "noatsign", "@missing.com", "user@localhost"];
-
-    let mut inputs: Vec<&str> = Vec::with_capacity(100_000);
-    let all: Vec<&str> = valid.iter().chain(invalid.iter()).copied().collect();
-    for chunk in all.iter().cycle().take(100_000) {
-        inputs.push(chunk);
-    }
-
-    let config = Config::builder()
-        .strip_subaddress()
-        .dots_gmail_only()
-        .lowercase_all()
-        .build();
+    let inputs = batch_inputs();
+    let config = batch_config();
 
     group.bench_function("parallel_100k", |b| {
         b.iter(|| EmailAddress::parse_batch_par(black_box(&inputs), black_box(&config)));
