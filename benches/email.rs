@@ -11,7 +11,6 @@ fn bench_parse(c: &mut Criterion) {
         ("quoted", "\"user name\"@example.com"),
         ("utf8_local", "дмитрий@example.com"),
         ("utf8_domain", "user@münchen.de"),
-        ("display_name", "John Doe <user@example.com>"),
         (
             "long",
             "very.long.local.part.with.many.dots@subdomain.example.co.uk",
