@@ -85,7 +85,7 @@ assert_eq!(email.display_name(), Some("John Doe"));
 
 ```toml
 # Minimal (no serde, no PSL)
-structured-email-address = { version = "0.0", default-features = false }
+structured-email-address = { version = "0.0.1", default-features = false }
 ```
 
 ## Anti-Homoglyph Protection
