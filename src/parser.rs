@@ -443,8 +443,6 @@ fn parse_dot_atom_domain(parser: &mut Parser<'_>, allow_obs: bool) -> Result<(),
 
 /// Parse a single domain label: starts and ends with alnum, may contain hyphens.
 fn parse_domain_label(parser: &mut Parser<'_>) -> Result<(), Error> {
-    let start = parser.pos;
-
     // First char must be alnum (or UTF-8 non-ASCII for IDN)
     match parser.peek() {
         Some(ch) if ch.is_ascii_alphanumeric() || is_utf8_non_ascii(ch) => {
@@ -470,10 +468,6 @@ fn parse_domain_label(parser: &mut Parser<'_>) -> Result<(), Error> {
 
     if last_was_hyphen {
         return Err(parser.error(ErrorKind::DomainLabelHyphen));
-    }
-
-    if parser.pos == start {
-        return Err(parser.error(ErrorKind::EmptyDomain));
     }
 
     Ok(())
@@ -613,10 +607,12 @@ fn skip_cfws(parser: &mut Parser<'_>, depth: usize) {
                     continue;
                 }
                 Err(_) => {
-                    // Restore parser position so the caller can handle the '(' and
-                    // any following characters as part of normal parsing.
+                    // Intentionally swallowing comment parse errors here.
+                    // skip_cfws is called in contexts where '(' may not start a comment
+                    // (e.g., trailing garbage after addr-spec). Propagating the error
+                    // would mask the real issue. Instead, restore position and let the
+                    // caller produce a context-appropriate error (Unexpected, MissingAtSign, etc.).
                     parser.pos = comment_start;
-                    // Do not attempt to parse this as CFWS again.
                     break;
                 }
             }

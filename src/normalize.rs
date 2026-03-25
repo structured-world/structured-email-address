@@ -95,10 +95,11 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normaliz
         None
     };
 
-    // Display name
+    // Display name — unescape quoted-pairs and collapse FWS so the stored
+    // value represents the semantic name, not raw RFC syntax.
     let display_name = parsed
         .display_name
-        .map(|span| span.as_str(parsed.input).to_string());
+        .map(|span| unescape_quoted_string(span.as_str(parsed.input)));
 
     Ok(Normalized {
         local_part: local_after_dots,
@@ -129,10 +130,11 @@ fn is_gmail_domain(domain: &str) -> bool {
     domain.eq_ignore_ascii_case("gmail.com") || domain.eq_ignore_ascii_case("googlemail.com")
 }
 
-/// Remove RFC 5322 quoted-pair backslashes: `\"` → `"`, `\\` → `\`, etc.
+/// Remove RFC 5322 quoted-pair backslashes (`\"` → `"`, `\\` → `\`)
+/// and collapse FWS (CRLF + WSP) to a single space.
 fn unescape_quoted_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
+    let mut chars = s.chars().peekable();
     while let Some(ch) = chars.next() {
         if ch == '\\' {
             // Consume the escaped character (or keep backslash if at end).
@@ -141,6 +143,19 @@ fn unescape_quoted_string(s: &str) -> String {
             } else {
                 out.push(ch);
             }
+        } else if ch == '\r' {
+            // Collapse FWS (CRLF + WSP) to a single space.
+            if chars.peek() == Some(&'\n') {
+                chars.next(); // consume '\n'
+                // Skip all following WSP
+                while matches!(chars.peek(), Some(' ' | '\t')) {
+                    chars.next();
+                }
+                out.push(' ');
+            }
+            // Bare CR without LF: skip (shouldn't appear per parser validation).
+        } else if ch == '\n' {
+            // Bare LF: skip (shouldn't appear per parser validation).
         } else {
             out.push(ch);
         }

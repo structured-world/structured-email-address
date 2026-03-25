@@ -208,7 +208,8 @@ fn needs_quoting(local: &str) -> bool {
     })
 }
 
-/// Escape a local-part for use inside quotes: backslash-escape `"` and `\`.
+/// Escape a local-part for use inside quotes: backslash-escape `"` and `\`,
+/// strip CR/LF to prevent header injection (FWS is collapsed during normalization).
 fn escape_local_part(local: &str) -> String {
     let mut escaped = String::with_capacity(local.len());
     for ch in local.chars() {
@@ -217,6 +218,7 @@ fn escape_local_part(local: &str) -> String {
                 escaped.push('\\');
                 escaped.push(ch);
             }
+            '\r' | '\n' => {} // strip CRLF to prevent header injection
             _ => escaped.push(ch),
         }
     }
