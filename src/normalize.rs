@@ -77,11 +77,10 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Normalized {
     // IDNA can fail for legitimate Unicode domains that lack a punycode mapping
     // (e.g., labels with non-IDNA2008 characters). Falling back to NFC lowercase
     // preserves the domain in a usable canonical form rather than rejecting it.
+    // idna::domain_to_ascii() already produces lowercase ASCII; the fallback
+    // path lowercases explicitly. No second .to_lowercase() needed.
     let canonical_domain =
         idna::domain_to_ascii(&nfc_domain).unwrap_or_else(|_| nfc_domain.to_lowercase());
-
-    // Step 7: Domain case (always lowercase per RFC).
-    let canonical_domain = canonical_domain.to_lowercase();
 
     // Step 8: Anti-homoglyph skeleton (optional).
     let skel = if config.check_confusables {

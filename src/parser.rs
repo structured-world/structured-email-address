@@ -429,10 +429,10 @@ fn parse_dot_atom_domain(parser: &mut Parser<'_>, allow_obs: bool) -> Result<(),
         if allow_obs {
             skip_cfws(parser, 0);
         }
-        if parse_domain_label(parser).is_err() {
-            parser.restore(save);
-            break;
-        }
+        // Once '.' is consumed, the next label must be valid — propagate
+        // the error so trailing dots and consecutive dots give domain-specific
+        // errors instead of a generic "unexpected character".
+        parse_domain_label(parser)?;
     }
 
     Ok(())
@@ -831,6 +831,27 @@ mod tests {
         let p = parse("user@[192.168.1.1]", Strictness::Standard, false, true)
             .unwrap_or_else(|e| panic!("parse failed: {e}"));
         assert_eq!(p.domain.as_str(p.input), "[192.168.1.1]");
+    }
+
+    #[test]
+    fn trailing_dot_in_domain_gives_domain_error() {
+        // "user@example." — once '.' is consumed, error should be domain-specific.
+        let e = parse_err("user@example.");
+        assert!(
+            matches!(e.kind(), ErrorKind::EmptyDomain),
+            "expected EmptyDomain, got {:?}",
+            e.kind()
+        );
+    }
+
+    #[test]
+    fn consecutive_dots_in_domain_gives_domain_error() {
+        let e = parse_err("user@example..com");
+        assert!(
+            matches!(e.kind(), ErrorKind::EmptyDomain),
+            "expected EmptyDomain, got {:?}",
+            e.kind()
+        );
     }
 
     #[test]
