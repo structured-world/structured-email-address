@@ -47,19 +47,6 @@ pub(crate) fn validate(
         ));
     }
 
-    // Domain label lengths.
-    for label in domain.split('.') {
-        if label.len() > MAX_LABEL_LEN {
-            return Err(Error::new(
-                ErrorKind::DomainLabelTooLong {
-                    label: label.to_string(),
-                    len: label.len(),
-                },
-                parsed.domain.start,
-            ));
-        }
-    }
-
     // Domain must have at least one dot (unless configured otherwise).
     if config.require_tld_dot && !domain.contains('.') {
         let raw_domain = parsed.domain.as_str(parsed.input);
@@ -72,6 +59,20 @@ pub(crate) fn validate(
     // Domain check policy (domain literals bypass TLD/PSL validation).
     let is_domain_literal = parsed.domain.as_str(parsed.input).starts_with('[');
     if !is_domain_literal {
+        // Domain label length check only applies to hostnames, not domain literals
+        // like [192.168.1.1] where splitting on '.' produces invalid labels.
+        for label in domain.split('.') {
+            if label.len() > MAX_LABEL_LEN {
+                return Err(Error::new(
+                    ErrorKind::DomainLabelTooLong {
+                        label: label.to_string(),
+                        len: label.len(),
+                    },
+                    parsed.domain.start,
+                ));
+            }
+        }
+
         match config.domain_check {
             DomainCheck::Syntax => {}
             DomainCheck::Tld => validate_tld(domain, parsed.domain.start)?,

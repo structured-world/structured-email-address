@@ -16,8 +16,6 @@ pub enum ErrorKind {
     Empty,
     /// Missing `@` separator.
     MissingAtSign,
-    /// Multiple `@` outside of quoted local-part.
-    MultipleAtSigns,
     /// Local part is empty (nothing before `@`).
     EmptyLocalPart,
     /// Domain is empty (nothing after `@`).
@@ -74,7 +72,6 @@ impl fmt::Display for Error {
         match &self.kind {
             ErrorKind::Empty => write!(f, "empty input"),
             ErrorKind::MissingAtSign => write!(f, "missing '@' separator"),
-            ErrorKind::MultipleAtSigns => write!(f, "multiple unquoted '@' signs"),
             ErrorKind::EmptyLocalPart => write!(f, "empty local part"),
             ErrorKind::EmptyDomain => write!(f, "empty domain"),
             ErrorKind::LocalPartTooLong { len } => {
