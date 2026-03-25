@@ -120,8 +120,16 @@ impl EmailAddress {
     }
 
     /// The full canonical address: `local_part@domain`.
+    ///
+    /// If the local part contains characters that require quoting (spaces,
+    /// special chars), it is wrapped in quotes for RFC compliance.
     pub fn canonical(&self) -> String {
-        format!("{}@{}", self.local_part, self.domain)
+        if needs_quoting(&self.local_part) {
+            let escaped = escape_local_part(&self.local_part);
+            format!("\"{}\"@{}", escaped, self.domain)
+        } else {
+            format!("{}@{}", self.local_part, self.domain)
+        }
     }
 
     /// The original input (trimmed).
@@ -144,21 +152,75 @@ impl EmailAddress {
 
 impl std::fmt::Display for EmailAddress {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let local = if needs_quoting(&self.local_part) {
+            format!("\"{}\"", escape_local_part(&self.local_part))
+        } else {
+            self.local_part.clone()
+        };
         match &self.display_name {
             Some(name) => write!(
                 f,
                 "\"{}\" <{}@{}>",
                 escape_display_name(name),
-                self.local_part,
+                local,
                 self.domain
             ),
-            None => write!(f, "{}@{}", self.local_part, self.domain),
+            None => write!(f, "{}@{}", local, self.domain),
         }
     }
 }
 
 /// Escape a display name for safe inclusion in a quoted string.
 ///
+/// Check if a local-part needs quoting for RFC 5321/5322 serialization.
+/// Returns true if the local part contains characters outside of atext.
+fn needs_quoting(local: &str) -> bool {
+    if local.is_empty() {
+        return true;
+    }
+    local.chars().any(|ch| {
+        !ch.is_ascii_alphanumeric()
+            && !matches!(
+                ch,
+                '!' | '#'
+                    | '$'
+                    | '%'
+                    | '&'
+                    | '\''
+                    | '*'
+                    | '+'
+                    | '-'
+                    | '/'
+                    | '='
+                    | '?'
+                    | '^'
+                    | '_'
+                    | '`'
+                    | '{'
+                    | '|'
+                    | '}'
+                    | '~'
+                    | '.'
+            )
+            && (ch as u32) < 0x80 // non-ASCII doesn't need quoting per RFC 6531
+    })
+}
+
+/// Escape a local-part for use inside quotes: backslash-escape `"` and `\`.
+fn escape_local_part(local: &str) -> String {
+    let mut escaped = String::with_capacity(local.len());
+    for ch in local.chars() {
+        match ch {
+            '"' | '\\' => {
+                escaped.push('\\');
+                escaped.push(ch);
+            }
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
 /// Backslash-escapes `"` and `\`, and strips bare CR/LF to prevent
 /// header injection in serialized output.
 fn escape_display_name(name: &str) -> String {
