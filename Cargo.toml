@@ -2,7 +2,7 @@
 name = "structured-email-address"
 version = "0.0.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.92"
 authors = ["Structured World Foundation <foundation@sw.foundation>"]
 description = "RFC 5321/5322/6531 email address parser, validator, and normalizer. Subaddress extraction, provider-aware normalization, PSL domain validation, anti-homoglyph protection."
 documentation = "https://docs.rs/structured-email-address/"
