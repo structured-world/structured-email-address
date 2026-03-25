@@ -176,6 +176,10 @@ fn needs_quoting(local: &str) -> bool {
     if local.is_empty() {
         return true;
     }
+    // Dots are only safe in valid dot-atom form (no leading/trailing/consecutive dots).
+    if local.starts_with('.') || local.ends_with('.') || local.contains("..") {
+        return true;
+    }
     local.chars().any(|ch| {
         !ch.is_ascii_alphanumeric()
             && !matches!(

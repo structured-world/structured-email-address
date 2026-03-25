@@ -127,4 +127,46 @@ mod tests {
         assert!(validate_tld("example.x", 0).is_err()); // single char
         assert!(validate_tld("example.123", 0).is_err()); // numeric
     }
+
+    // ── Full validate() tests ──
+
+    #[test]
+    fn rejects_local_part_too_long() {
+        let long_local = "a".repeat(65);
+        let input = format!("{long_local}@example.com");
+        let result: Result<crate::EmailAddress, _> = input.parse();
+        assert!(matches!(
+            result.unwrap_err().kind(),
+            crate::ErrorKind::LocalPartTooLong { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_address_too_long() {
+        let long_domain = format!("{}.com", "a".repeat(250));
+        let input = format!("u@{long_domain}");
+        let result: Result<crate::EmailAddress, _> = input.parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_domain_label_too_long() {
+        let long_label = "a".repeat(64);
+        let input = format!("user@{long_label}.com");
+        let result: Result<crate::EmailAddress, _> = input.parse();
+        assert!(matches!(
+            result.unwrap_err().kind(),
+            crate::ErrorKind::DomainLabelTooLong { .. }
+        ));
+    }
+
+    #[test]
+    fn domain_literal_skips_label_check() {
+        let config = crate::Config::builder()
+            .allow_domain_literal()
+            .allow_single_label_domain()
+            .build();
+        let result = crate::EmailAddress::parse_with("user@[192.168.1.1]", &config);
+        assert!(result.is_ok());
+    }
 }
