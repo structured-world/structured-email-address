@@ -83,6 +83,11 @@ fn bench_strictness(c: &mut Criterion) {
         b.iter(|| EmailAddress::parse_with(black_box(input), &lax));
     });
 
+    // Mode-sensitive: quoted-string accepted by Standard, rejected by Strict
+    group.bench_function("standard_quoted", |b| {
+        b.iter(|| EmailAddress::parse_with(black_box("\"user name\"@example.com"), &standard));
+    });
+
     group.finish();
 }
 

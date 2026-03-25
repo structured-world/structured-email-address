@@ -177,6 +177,10 @@ fn escape_display_name(name: &str) -> String {
     escaped
 }
 
+/// Equality is based on canonical form (`local_part` + `domain`) only.
+/// Display name, tag, and skeleton are intentionally excluded —
+/// `"John" <user@example.com>` equals `"Jane" <user@example.com>`
+/// because they route to the same mailbox.
 impl PartialEq for EmailAddress {
     fn eq(&self, other: &Self) -> bool {
         self.local_part == other.local_part && self.domain == other.domain
