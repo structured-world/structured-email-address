@@ -115,8 +115,7 @@ fn apply_dot_policy(local: &str, domain: &str, policy: DotPolicy) -> String {
         DotPolicy::Preserve => local.to_string(),
         DotPolicy::Always => local.replace('.', ""),
         DotPolicy::GmailOnly => {
-            let domain_lower = domain.to_lowercase();
-            if is_gmail_domain(&domain_lower) {
+            if is_gmail_domain(domain) {
                 local.replace('.', "")
             } else {
                 local.to_string()
@@ -125,9 +124,9 @@ fn apply_dot_policy(local: &str, domain: &str, policy: DotPolicy) -> String {
     }
 }
 
-/// Check if domain is a Gmail domain (ignores dots in local part).
+/// Check if domain is a Gmail domain (case-insensitive, allocation-free).
 fn is_gmail_domain(domain: &str) -> bool {
-    matches!(domain, "gmail.com" | "googlemail.com")
+    domain.eq_ignore_ascii_case("gmail.com") || domain.eq_ignore_ascii_case("googlemail.com")
 }
 
 /// Remove RFC 5322 quoted-pair backslashes: `\"` → `"`, `\\` → `\`, etc.

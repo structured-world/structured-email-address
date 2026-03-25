@@ -358,8 +358,11 @@ fn parse_quoted_string(parser: &mut Parser<'_>) -> Result<(), Error> {
             Some(ch) if is_qtext(ch) => {
                 parser.advance();
             }
-            Some(ch) if is_wsp(ch) => {
-                parser.advance(); // FWS within quoted string
+            // RFC 5322 FWS: plain WSP or CRLF + WSP (folded whitespace).
+            Some(ch) if is_wsp(ch) || ch == '\r' => {
+                if !try_eat_fws(parser) {
+                    return Err(parser.error(ErrorKind::InvalidLocalPartChar { ch: '\r' }));
+                }
             }
             None => return Err(parser.error(ErrorKind::UnterminatedQuotedString)),
             Some(ch) => {
@@ -496,14 +499,62 @@ fn parse_domain_literal(parser: &mut Parser<'_>, strictness: Strictness) -> Resu
                     _ => return Err(parser.error(ErrorKind::InvalidQuotedPair)),
                 }
             }
-            Some(ch) if is_dtext(ch) || is_wsp(ch) => {
+            Some(ch) if is_dtext(ch) => {
                 parser.advance();
+            }
+            // RFC 5322 FWS: plain WSP or CRLF + WSP (folded whitespace).
+            Some(ch) if is_wsp(ch) || ch == '\r' => {
+                if !try_eat_fws(parser) {
+                    return Err(parser.error(ErrorKind::InvalidDomainChar { ch: '\r' }));
+                }
             }
             None => return Err(parser.error(ErrorKind::UnterminatedDomainLiteral)),
             Some(ch) => {
                 return Err(parser.error(ErrorKind::InvalidDomainChar { ch }));
             }
         }
+    }
+}
+
+/// Try to consume one FWS token: either plain WSP, or CRLF followed by at least one WSP.
+/// Returns true if any whitespace was consumed.
+fn try_eat_fws(parser: &mut Parser<'_>) -> bool {
+    match parser.peek() {
+        Some(ch) if is_wsp(ch) => {
+            parser.advance();
+            // Consume any additional WSP
+            while let Some(ch) = parser.peek() {
+                if is_wsp(ch) {
+                    parser.advance();
+                } else {
+                    break;
+                }
+            }
+            true
+        }
+        Some('\r') => {
+            let pos = parser.pos;
+            let bytes = parser.input.as_bytes();
+            if pos + 2 < bytes.len()
+                && bytes[pos] == b'\r'
+                && bytes[pos + 1] == b'\n'
+                && (bytes[pos + 2] == b' ' || bytes[pos + 2] == b'\t')
+            {
+                parser.advance(); // '\r'
+                parser.advance(); // '\n'
+                while let Some(ch) = parser.peek() {
+                    if is_wsp(ch) {
+                        parser.advance();
+                    } else {
+                        break;
+                    }
+                }
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
     }
 }
 
