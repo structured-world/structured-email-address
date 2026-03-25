@@ -95,6 +95,18 @@ structured-email-address = { version = "0.0.1", features = ["rayon"] }
 let results = EmailAddress::parse_batch_par(&huge_list, &config);
 ```
 
+### Batch Benchmarks (baseline)
+
+100K emails (mix of valid + invalid), `strip_subaddress` + `dots_gmail_only` + `lowercase_all` config.
+Apple M1 Pro, Rust 1.85, `cargo bench --all-features`.
+
+| Variant | Time | Throughput |
+|---------|------|-----------|
+| `parse_batch` (sequential) | 49.1 ms | ~2.0M emails/sec |
+| `parse_batch_par` (rayon) | 9.6 ms | ~10.4M emails/sec |
+
+Rayon gives ~5x speedup on this workload.
+
 ## Strictness Levels
 
 | Level | Grammar | Use case |
