@@ -578,7 +578,7 @@ fn skip_cfws(parser: &mut Parser<'_>, depth: usize) {
                         // Consume CRLF
                         parser.advance(); // '\r'
                         parser.advance(); // '\n'
-                        // Consume at least one following WSP, and any additional WSP
+                                          // Consume at least one following WSP, and any additional WSP
                         while let Some(wch) = parser.peek() {
                             if is_wsp(wch) {
                                 parser.advance();
@@ -925,6 +925,57 @@ mod tests {
         )
         .expect_err("Strict mode must reject CFWS before closing angle bracket");
         assert!(matches!(e.kind(), ErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn strict_rejects_quoted_local_part() {
+        // RFC 5321 Strict mode must reject quoted-string local parts.
+        let e = parse("\"quoted\"@example.com", Strictness::Strict, false, false)
+            .expect_err("Strict mode must reject quoted-string local part");
+        assert_eq!(e.kind(), &ErrorKind::InvalidLocalPartChar { ch: '"' });
+    }
+
+    #[test]
+    fn strict_rejects_leading_comment() {
+        // RFC 5321 Strict mode must reject leading comments/CFWS.
+        let e = parse(
+            "(comment)user@example.com",
+            Strictness::Strict,
+            false,
+            false,
+        )
+        .expect_err("Strict mode must reject leading comment");
+        // Leading `(` is not valid atext, so parser sees it as invalid local-part char.
+        assert!(
+            matches!(
+                e.kind(),
+                ErrorKind::EmptyLocalPart
+                    | ErrorKind::Unexpected { .. }
+                    | ErrorKind::InvalidLocalPartChar { .. }
+            ),
+            "expected local-part or unexpected error, got {:?}",
+            e.kind()
+        );
+    }
+
+    #[test]
+    fn standard_accepts_quoted_string_and_comments() {
+        // Standard mode (RFC 5322) must accept quoted-string local parts.
+        let p = parse("\"quoted\"@example.com", Strictness::Standard, false, false)
+            .unwrap_or_else(|e| panic!("Standard must accept quoted-string: {e}"));
+        assert_eq!(p.local_part.as_str(p.input), "\"quoted\"");
+        assert_eq!(p.domain.as_str(p.input), "example.com");
+
+        // Standard mode must accept trailing comments.
+        let p = parse(
+            "user@example.com (comment)",
+            Strictness::Standard,
+            false,
+            false,
+        )
+        .unwrap_or_else(|e| panic!("Standard must accept trailing comment: {e}"));
+        assert_eq!(p.local_part.as_str(p.input), "user");
+        assert_eq!(p.domain.as_str(p.input), "example.com");
     }
 
     #[test]
