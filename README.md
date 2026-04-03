@@ -20,6 +20,7 @@ Every Rust email crate stops at RFC validation. This one goes further:
 | Configurable case folding | - | - | **Yes** |
 | PSL domain validation | - | - | **Yes** |
 | Anti-homoglyph detection | - | - | **Yes** |
+| IDN domain Unicode accessor | - | - | **Yes** |
 | Display name parsing | Yes | - | **Yes** |
 | Configurable strictness | Partial | Partial | **Full** |
 | Serde support | Yes | - | **Yes** |
@@ -37,6 +38,11 @@ let email: EmailAddress = "user+tag@example.com".parse()?;
 assert_eq!(email.local_part(), "user+tag");
 assert_eq!(email.tag(), Some("tag"));
 assert_eq!(email.domain(), "example.com");
+
+// International domains: IDNA roundtrip
+let email: EmailAddress = "user@münchen.de".parse()?;
+assert_eq!(email.domain(), "xn--mnchen-3ya.de");
+assert_eq!(email.domain_unicode(), "münchen.de");
 ```
 
 ## Configured Parsing

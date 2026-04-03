@@ -63,6 +63,8 @@ pub struct EmailAddress {
     tag: Option<String>,
     /// Canonical domain (IDNA-encoded, lowercased).
     domain: String,
+    /// Unicode form of the domain (only when domain has punycode labels).
+    domain_unicode: Option<String>,
     /// Display name, if parsed from `name-addr` format.
     display_name: Option<String>,
     /// Confusable skeleton, if config enabled it.
@@ -87,6 +89,7 @@ impl EmailAddress {
             local_part: normalized.local_part,
             tag: normalized.tag,
             domain: normalized.domain,
+            domain_unicode: normalized.domain_unicode,
             display_name: normalized.display_name,
             skeleton: normalized.skeleton,
         })
@@ -112,6 +115,26 @@ impl EmailAddress {
     /// The canonical domain (IDNA-encoded, lowercased).
     pub fn domain(&self) -> &str {
         &self.domain
+    }
+
+    /// The domain in Unicode form.
+    ///
+    /// For internationalized domains (`münchen.de` → `xn--mnchen-3ya.de`),
+    /// returns the original Unicode representation. For ASCII-only domains,
+    /// returns the same value as [`domain()`](Self::domain).
+    ///
+    /// ```
+    /// use structured_email_address::EmailAddress;
+    ///
+    /// let email: EmailAddress = "user@münchen.de".parse().unwrap();
+    /// assert_eq!(email.domain(), "xn--mnchen-3ya.de");
+    /// assert_eq!(email.domain_unicode(), "münchen.de");
+    ///
+    /// let ascii: EmailAddress = "user@example.com".parse().unwrap();
+    /// assert_eq!(ascii.domain_unicode(), "example.com");
+    /// ```
+    pub fn domain_unicode(&self) -> &str {
+        self.domain_unicode.as_deref().unwrap_or(&self.domain)
     }
 
     /// The display name, if parsed from `"Name" <addr>` or `Name <addr>` format.
@@ -565,6 +588,42 @@ mod tests {
             results[1].as_ref().map(|e| e.canonical()),
             Ok("bob@example.com".to_string())
         );
+    }
+
+    // ── domain_unicode() accessor ──
+
+    #[test]
+    fn domain_unicode_roundtrip() {
+        // IDN domain: input Unicode → domain() punycode → domain_unicode() back to Unicode.
+        let email: EmailAddress = "user@münchen.de".parse().unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(email.domain(), "xn--mnchen-3ya.de");
+        assert_eq!(email.domain_unicode(), "münchen.de");
+    }
+
+    #[test]
+    fn domain_unicode_ascii_fallback() {
+        // ASCII domain: domain_unicode() returns same as domain().
+        let email: EmailAddress = "user@example.com".parse().unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(email.domain_unicode(), "example.com");
+        assert_eq!(email.domain_unicode(), email.domain());
+    }
+
+    #[test]
+    fn domain_unicode_mixed_labels() {
+        // Domain with one IDN label and one ASCII label.
+        let email: EmailAddress = "user@über.example.com"
+            .parse()
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(email.domain(), "xn--ber-goa.example.com");
+        assert_eq!(email.domain_unicode(), "über.example.com");
+    }
+
+    #[test]
+    fn domain_unicode_japanese() {
+        // Japanese domain roundtrip.
+        let email: EmailAddress = "user@例え.jp".parse().unwrap_or_else(|e| panic!("{e}"));
+        assert!(email.domain().contains("xn--"));
+        assert_eq!(email.domain_unicode(), "例え.jp");
     }
 
     #[cfg(feature = "rayon")]
