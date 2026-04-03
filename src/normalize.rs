@@ -359,8 +359,7 @@ mod tests {
 
     #[test]
     fn obs_cfws_stripped_before_normalization() {
-        // Verify that CFWS-stripped content flows through NFC, case folding,
-        // and IDNA encoding correctly.
+        // Verify that CFWS-stripped content flows through case folding.
         let config = Config::builder()
             .strictness(crate::Strictness::Lax)
             .lowercase_all()
@@ -368,5 +367,17 @@ mod tests {
         let n = parse_and_normalize("User (comment) . Name@Example (c) . COM", &config);
         assert_eq!(n.local_part, "user.name", "CFWS stripped + lowercased");
         assert_eq!(n.domain, "example.com", "domain CFWS stripped + lowercased");
+    }
+
+    #[test]
+    fn obs_cfws_stripped_with_idna() {
+        // Verify CFWS stripping flows through IDNA encoding.
+        let config = Config::builder()
+            .strictness(crate::Strictness::Lax)
+            .lowercase_all()
+            .build();
+        let n = parse_and_normalize("user@münchen (comment) . de", &config);
+        assert_eq!(n.domain, "xn--mnchen-3ya.de");
+        assert_eq!(n.domain_unicode.as_deref(), Some("münchen.de"));
     }
 }

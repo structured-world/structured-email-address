@@ -363,7 +363,7 @@ fn parse_dot_atom_local(parser: &mut Parser<'_>, allow_obs: bool) -> Result<Opti
             break;
         }
         if had_cfws_before_dot && clean.is_none() {
-            let mut s = String::with_capacity(parser.input.len().saturating_sub(outer_start));
+            let mut s = String::with_capacity(last_clean_end - outer_start);
             s.push_str(&parser.input[outer_start..last_clean_end]);
             clean = Some(s);
         }
@@ -371,7 +371,7 @@ fn parse_dot_atom_local(parser: &mut Parser<'_>, allow_obs: bool) -> Result<Opti
         // If CFWS after dot and we haven't started clean yet, seed with
         // content before the dot — the dot is appended below via push('.').
         if clean.is_none() && parser.pos > last_clean_end + 1 {
-            let mut s = String::with_capacity(parser.input.len().saturating_sub(outer_start));
+            let mut s = String::with_capacity(last_clean_end - outer_start);
             s.push_str(&parser.input[outer_start..last_clean_end]);
             clean = Some(s);
         }
@@ -525,13 +525,13 @@ fn parse_dot_atom_domain(
             break;
         }
         if had_cfws_before_dot && clean.is_none() {
-            let mut s = String::with_capacity(parser.input.len().saturating_sub(outer_start));
+            let mut s = String::with_capacity(last_clean_end - outer_start);
             s.push_str(&parser.input[outer_start..last_clean_end]);
             clean = Some(s);
         }
         skip_cfws(parser, 0);
         if clean.is_none() && parser.pos > last_clean_end + 1 {
-            let mut s = String::with_capacity(parser.input.len().saturating_sub(outer_start));
+            let mut s = String::with_capacity(last_clean_end - outer_start);
             s.push_str(&parser.input[outer_start..last_clean_end]);
             clean = Some(s);
         }
