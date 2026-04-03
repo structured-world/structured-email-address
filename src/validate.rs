@@ -25,8 +25,8 @@ pub(crate) fn validate(
 
     // Length limits apply to the RAW addr-spec (RFC 5321 §4.5.3.1),
     // not the normalized form (which may be shorter after tag/dot stripping).
-    let raw_local = parsed.local_part.as_str(parsed.input);
-    let raw_domain = parsed.domain.as_str(parsed.input);
+    let raw_local = parsed.local_part_str();
+    let raw_domain = parsed.domain_str();
 
     // Length: local part (max 64 octets).
     if raw_local.len() > MAX_LOCAL_PART_LEN {

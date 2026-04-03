@@ -29,8 +29,8 @@ pub(crate) struct Normalized {
 
 /// Normalize a parsed email address according to the given config.
 pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normalized, Error> {
-    let raw_local = parsed.local_part.as_str(parsed.input);
-    let raw_domain = parsed.domain.as_str(parsed.input);
+    let raw_local = parsed.local_part_str();
+    let raw_domain = parsed.domain_str();
     let is_quoted = raw_local.starts_with('"') && raw_local.ends_with('"');
 
     // Strip quotes and unescape RFC quoted-pairs from quoted-string local parts.
@@ -284,6 +284,8 @@ mod tests {
                 end: input.len(),
             },
             comments: vec![],
+            local_part_clean: None,
+            domain_clean: None,
         };
         let err = normalize(&parsed, &config).unwrap_err();
         assert!(

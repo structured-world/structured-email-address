@@ -26,6 +26,26 @@ pub(crate) struct Parsed<'a> {
     /// Comments found during parsing.
     #[allow(dead_code)]
     pub comments: Vec<Span>,
+    /// Clean local-part with CFWS stripped (only set for obs-local-part with CFWS).
+    pub local_part_clean: Option<String>,
+    /// Clean domain with CFWS stripped (only set for obs-domain with CFWS).
+    pub domain_clean: Option<String>,
+}
+
+impl<'a> Parsed<'a> {
+    /// Effective local-part content: CFWS-stripped version if available, otherwise raw span.
+    pub fn local_part_str(&self) -> &str {
+        self.local_part_clean
+            .as_deref()
+            .unwrap_or_else(|| self.local_part.as_str(self.input))
+    }
+
+    /// Effective domain content: CFWS-stripped version if available, otherwise raw span.
+    pub fn domain_str(&self) -> &str {
+        self.domain_clean
+            .as_deref()
+            .unwrap_or_else(|| self.domain.as_str(self.input))
+    }
 }
 
 /// A byte-offset range into the input string.
@@ -149,7 +169,7 @@ pub(crate) fn parse(
     }
 
     // Parse addr-spec: local-part "@" domain
-    let local_part = parse_local_part(&mut parser, strictness)?;
+    let (local_part, local_part_clean) = parse_local_part(&mut parser, strictness)?;
     // RFC 5322 allows CFWS around "@" in Standard/Lax modes.
     if !matches!(strictness, Strictness::Strict) {
         skip_cfws(&mut parser, 0);
@@ -160,7 +180,7 @@ pub(crate) fn parse(
     if !matches!(strictness, Strictness::Strict) {
         skip_cfws(&mut parser, 0);
     }
-    let domain = parse_domain(&mut parser, strictness, allow_domain_literal)?;
+    let (domain, domain_clean) = parse_domain(&mut parser, strictness, allow_domain_literal)?;
 
     if is_angle {
         if !matches!(strictness, Strictness::Strict) {
@@ -189,6 +209,8 @@ pub(crate) fn parse(
         local_part,
         domain,
         comments: parser.comments,
+        local_part_clean,
+        domain_clean,
     })
 }
 
@@ -247,7 +269,13 @@ fn try_parse_display_name(parser: &mut Parser<'_>) -> Option<Span> {
 }
 
 /// Parse local-part: dot-atom / quoted-string / obs-local-part.
-fn parse_local_part(parser: &mut Parser<'_>, strictness: Strictness) -> Result<Span, Error> {
+///
+/// Returns `(span, clean)` where `clean` is `Some(String)` when obs-local-part
+/// contained CFWS that was stripped from the semantic value.
+fn parse_local_part(
+    parser: &mut Parser<'_>,
+    strictness: Strictness,
+) -> Result<(Span, Option<String>), Error> {
     let start = parser.pos;
     let allow_obs = matches!(strictness, Strictness::Lax);
 
@@ -259,73 +287,102 @@ fn parse_local_part(parser: &mut Parser<'_>, strictness: Strictness) -> Result<S
         if !allow_obs {
             // Standard mode: quoted-string is the entire local-part.
             parse_quoted_string(parser)?;
-            return Ok(Span::new(start, parser.pos));
+            return Ok((Span::new(start, parser.pos), None));
         }
         // Lax mode: fall through — obs-local-part allows quoted-string as first word,
         // followed by optional "." word segments.
     }
 
     // dot-atom (or obs-local-part if Lax)
-    parse_dot_atom_local(parser, allow_obs)?;
+    let clean = parse_dot_atom_local(parser, allow_obs)?;
 
     let end = parser.pos;
     if end == start {
         return Err(parser.error(ErrorKind::EmptyLocalPart));
     }
 
-    Ok(Span::new(start, end))
+    Ok((Span::new(start, end), clean))
 }
 
 /// Parse dot-atom for local-part: `atext+ ("." atext+)*`.
 /// If `allow_obs` is true, allows CFWS between atoms (obs-local-part).
-// TODO: CFWS between atoms is included in the Span — strip it for clean semantics (#13)
-fn parse_dot_atom_local(parser: &mut Parser<'_>, allow_obs: bool) -> Result<(), Error> {
-    // First word: atext-run, or (in obs mode) optional CFWS + atext-run or quoted-string.
-    if allow_obs {
-        skip_cfws(parser, 0);
-        if !eat_atext_run(parser) && !try_quoted_string(parser) {
-            return Err(parser.error(ErrorKind::EmptyLocalPart));
+///
+/// Returns `Some(clean)` when obs-mode CFWS was present and stripped,
+/// `None` when the span is already clean (zero-copy path).
+fn parse_dot_atom_local(parser: &mut Parser<'_>, allow_obs: bool) -> Result<Option<String>, Error> {
+    if !allow_obs {
+        // Standard mode: no CFWS between atoms, span is always clean.
+        if !eat_atext_run(parser) {
+            return Err(match parser.peek() {
+                Some(ch) if ch != '@' => parser.error(ErrorKind::InvalidLocalPartChar { ch }),
+                _ => parser.error(ErrorKind::EmptyLocalPart),
+            });
         }
-    } else if !eat_atext_run(parser) {
-        return Err(match parser.peek() {
-            // Non-atext char present → report the offending character.
-            Some(ch) if ch != '@' => parser.error(ErrorKind::InvalidLocalPartChar { ch }),
-            // Truly empty (at `@` or EOF).
-            _ => parser.error(ErrorKind::EmptyLocalPart),
-        });
+        loop {
+            let save = parser.save();
+            if !parser.eat('.') {
+                parser.restore(save);
+                break;
+            }
+            if !eat_atext_run(parser) {
+                return Err(parser.error(ErrorKind::EmptyLocalPart));
+            }
+        }
+        return Ok(None);
     }
+
+    // Obs mode: collect atom spans for clean reconstruction.
+    let outer_start = parser.pos;
+    let mut atoms: Vec<&str> = Vec::new();
+    let mut had_cfws = false;
+
+    // First word: optional CFWS + atext-run or quoted-string.
+    let before = parser.pos;
+    skip_cfws(parser, 0);
+    if parser.pos > before {
+        had_cfws = true;
+    }
+    let atom_start = parser.pos;
+    if !eat_atext_run(parser) && !try_quoted_string(parser) {
+        return Err(parser.error(ErrorKind::EmptyLocalPart));
+    }
+    atoms.push(&parser.input[atom_start..parser.pos]);
 
     // Subsequent ".atom" segments
     loop {
         let save = parser.save();
-        if allow_obs {
-            skip_cfws(parser, 0);
+        let before = parser.pos;
+        skip_cfws(parser, 0);
+        if parser.pos > before {
+            had_cfws = true;
         }
         if !parser.eat('.') {
             parser.restore(save);
             break;
         }
-        if allow_obs {
-            skip_cfws(parser, 0);
+        let before = parser.pos;
+        skip_cfws(parser, 0);
+        if parser.pos > before {
+            had_cfws = true;
         }
-        if allow_obs {
-            // In obs mode, allow either another atext run or a quoted-string segment.
-            if !eat_atext_run(parser) && !try_quoted_string(parser) {
-                // Trailing dot or invalid local-part after consuming '.' — report an error
-                // instead of backtracking and truncating the local-part.
-                return Err(parser.error(ErrorKind::EmptyLocalPart));
-            }
-        } else {
-            // In standard mode, quoted-string after '.' is not allowed (no obs-local-part).
-            if !eat_atext_run(parser) {
-                // Trailing dot: "." must be followed by another atom/quoted-string.
-                // Report an explicit local-part error instead of backtracking and truncating.
-                return Err(parser.error(ErrorKind::EmptyLocalPart));
-            }
+        let atom_start = parser.pos;
+        if !eat_atext_run(parser) && !try_quoted_string(parser) {
+            return Err(parser.error(ErrorKind::EmptyLocalPart));
         }
+        atoms.push(&parser.input[atom_start..parser.pos]);
     }
 
-    Ok(())
+    if had_cfws {
+        Ok(Some(atoms.join(".")))
+    } else {
+        // No CFWS found — verify span is clean (debug sanity check).
+        debug_assert_eq!(
+            &parser.input[outer_start..parser.pos],
+            atoms.join("."),
+            "obs-local-part without CFWS should match raw span"
+        );
+        Ok(None)
+    }
 }
 
 /// Consume one or more atext characters. Returns true if any consumed.
@@ -392,11 +449,14 @@ fn try_quoted_string(parser: &mut Parser<'_>) -> bool {
 }
 
 /// Parse domain: dot-atom / domain-literal / obs-domain.
+///
+/// Returns `(span, clean)` where `clean` is `Some(String)` when obs-domain
+/// contained CFWS that was stripped from the semantic value.
 fn parse_domain(
     parser: &mut Parser<'_>,
     strictness: Strictness,
     allow_domain_literal: bool,
-) -> Result<Span, Error> {
+) -> Result<(Span, Option<String>), Error> {
     let start = parser.pos;
 
     // Domain literal: [...]
@@ -405,45 +465,83 @@ fn parse_domain(
             return Err(parser.error(ErrorKind::InvalidDomainChar { ch: '[' }));
         }
         parse_domain_literal(parser, strictness)?;
-        return Ok(Span::new(start, parser.pos));
+        return Ok((Span::new(start, parser.pos), None));
     }
 
     // dot-atom domain
     let allow_obs = matches!(strictness, Strictness::Lax);
-    parse_dot_atom_domain(parser, allow_obs)?;
+    let clean = parse_dot_atom_domain(parser, allow_obs)?;
 
     let end = parser.pos;
     if end == start {
         return Err(parser.error(ErrorKind::EmptyDomain));
     }
 
-    Ok(Span::new(start, end))
+    Ok((Span::new(start, end), clean))
 }
 
 /// Parse dot-atom for domain: `label ("." label)*` where label avoids leading/trailing hyphen.
-// TODO: CFWS between labels is included in the Span — strip it for clean semantics (#13)
-fn parse_dot_atom_domain(parser: &mut Parser<'_>, allow_obs: bool) -> Result<(), Error> {
+///
+/// Returns `Some(clean)` when obs-mode CFWS was present and stripped,
+/// `None` when the span is already clean (zero-copy path).
+fn parse_dot_atom_domain(
+    parser: &mut Parser<'_>,
+    allow_obs: bool,
+) -> Result<Option<String>, Error> {
+    if !allow_obs {
+        // Standard mode: no CFWS between labels, span is always clean.
+        parse_domain_label(parser)?;
+        loop {
+            let save = parser.save();
+            if !parser.eat('.') {
+                parser.restore(save);
+                break;
+            }
+            parse_domain_label(parser)?;
+        }
+        return Ok(None);
+    }
+
+    // Obs mode: collect label spans for clean reconstruction.
+    let outer_start = parser.pos;
+    let mut labels: Vec<&str> = Vec::new();
+    let mut had_cfws = false;
+
+    let label_start = parser.pos;
     parse_domain_label(parser)?;
+    labels.push(&parser.input[label_start..parser.pos]);
 
     loop {
         let save = parser.save();
-        if allow_obs {
-            skip_cfws(parser, 0);
+        let before = parser.pos;
+        skip_cfws(parser, 0);
+        if parser.pos > before {
+            had_cfws = true;
         }
         if !parser.eat('.') {
             parser.restore(save);
             break;
         }
-        if allow_obs {
-            skip_cfws(parser, 0);
+        let before = parser.pos;
+        skip_cfws(parser, 0);
+        if parser.pos > before {
+            had_cfws = true;
         }
-        // Once '.' is consumed, the next label must be valid — propagate
-        // the error so trailing dots and consecutive dots give domain-specific
-        // errors instead of a generic "unexpected character".
+        let label_start = parser.pos;
         parse_domain_label(parser)?;
+        labels.push(&parser.input[label_start..parser.pos]);
     }
 
-    Ok(())
+    if had_cfws {
+        Ok(Some(labels.join(".")))
+    } else {
+        debug_assert_eq!(
+            &parser.input[outer_start..parser.pos],
+            labels.join("."),
+            "obs-domain without CFWS should match raw span"
+        );
+        Ok(None)
+    }
 }
 
 /// Parse a single domain label: starts and ends with alnum, may contain hyphens.
@@ -729,7 +827,6 @@ mod tests {
             .unwrap_or_else(|e| panic!("failed to parse '{input}': {e}"))
     }
 
-    #[allow(dead_code)]
     fn parse_ok_lax(input: &str) -> Parsed<'_> {
         parse(input, Strictness::Lax, false, false)
             .unwrap_or_else(|e| panic!("failed to parse '{input}': {e}"))
@@ -978,5 +1075,87 @@ mod tests {
         let e = parse("user@[192.168.1.1]", Strictness::Standard, false, false)
             .expect_err("expected error");
         assert_eq!(e.kind(), &ErrorKind::InvalidDomainChar { ch: '[' });
+    }
+
+    // ── Regression tests for #13: CFWS stripping in obs-local-part / obs-domain ──
+
+    #[test]
+    fn obs_local_part_cfws_comment_stripped() {
+        // obs-local-part with comment between atoms: span must not include CFWS.
+        let p = parse_ok_lax("user (comment) . name@example.com");
+        assert_eq!(
+            p.local_part_str(),
+            "user.name",
+            "CFWS comment must be stripped from obs-local-part"
+        );
+    }
+
+    #[test]
+    fn obs_local_part_whitespace_stripped() {
+        // obs-local-part with plain whitespace between atoms.
+        let p = parse_ok_lax("user . name@example.com");
+        assert_eq!(
+            p.local_part_str(),
+            "user.name",
+            "whitespace must be stripped from obs-local-part"
+        );
+    }
+
+    #[test]
+    fn obs_domain_cfws_comment_stripped() {
+        // obs-domain with comment between labels: span must not include CFWS.
+        let p = parse_ok_lax("user@example (comment) . com");
+        assert_eq!(
+            p.domain_str(),
+            "example.com",
+            "CFWS comment must be stripped from obs-domain"
+        );
+    }
+
+    #[test]
+    fn obs_domain_whitespace_stripped() {
+        // obs-domain with plain whitespace between labels.
+        let p = parse_ok_lax("user@example . com");
+        assert_eq!(
+            p.domain_str(),
+            "example.com",
+            "whitespace must be stripped from obs-domain"
+        );
+    }
+
+    #[test]
+    fn obs_local_no_cfws_zero_copy() {
+        // obs-local-part without CFWS: clean field is None (zero-copy path).
+        let p = parse_ok_lax("user.name@example.com");
+        assert!(
+            p.local_part_clean.is_none(),
+            "no CFWS → local_part_clean must be None (zero-copy)"
+        );
+        assert_eq!(p.local_part_str(), "user.name");
+    }
+
+    #[test]
+    fn obs_domain_no_cfws_zero_copy() {
+        // obs-domain without CFWS: clean field is None (zero-copy path).
+        let p = parse_ok_lax("user@example.com");
+        assert!(
+            p.domain_clean.is_none(),
+            "no CFWS → domain_clean must be None (zero-copy)"
+        );
+        assert_eq!(p.domain_str(), "example.com");
+    }
+
+    #[test]
+    fn obs_local_part_multiple_comments_stripped() {
+        // Multiple CFWS segments between atoms.
+        let p = parse_ok_lax("a (c1) . b (c2) . c@example.com");
+        assert_eq!(p.local_part_str(), "a.b.c");
+    }
+
+    #[test]
+    fn obs_local_part_leading_cfws_stripped() {
+        // Leading CFWS before first atom in obs-local-part.
+        let p = parse_ok_lax("(leading) user . name@example.com");
+        assert_eq!(p.local_part_str(), "user.name");
     }
 }
