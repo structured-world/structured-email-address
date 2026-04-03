@@ -331,34 +331,39 @@ fn parse_dot_atom_local(parser: &mut Parser<'_>, allow_obs: bool) -> Result<Opti
         return Ok(None);
     }
 
-    // Obs mode: collect atom spans for clean reconstruction.
-    let outer_start = parser.pos;
-    let mut atoms: Vec<&str> = Vec::new();
+    // Obs mode: parse atoms and track CFWS presence.
+    // Atom boundaries stored on the stack to avoid heap allocation
+    // when no CFWS is present (the common case).
+    // RFC 5321: local-part ≤ 64 octets → max 32 single-char atoms.
+    const MAX_ATOMS: usize = 32;
+    let mut bounds: [(usize, usize); MAX_ATOMS] = [(0, 0); MAX_ATOMS];
+    let mut count = 0;
     let mut had_cfws = false;
 
-    // First word: optional CFWS + atext-run or quoted-string.
-    let before = parser.pos;
-    skip_cfws(parser, 0);
-    if parser.pos > before {
-        had_cfws = true;
-    }
+    // First word: no leading CFWS — bare addr-spec does not permit CFWS
+    // before the local-part. CFWS stripping only applies between segments.
     let atom_start = parser.pos;
     if !eat_atext_run(parser) && !try_quoted_string(parser) {
-        return Err(parser.error(ErrorKind::EmptyLocalPart));
+        return Err(match parser.peek() {
+            Some(ch) if ch != '@' => parser.error(ErrorKind::InvalidLocalPartChar { ch }),
+            _ => parser.error(ErrorKind::EmptyLocalPart),
+        });
     }
-    atoms.push(&parser.input[atom_start..parser.pos]);
+    bounds[count] = (atom_start, parser.pos);
+    count += 1;
 
     // Subsequent ".atom" segments
     loop {
         let save = parser.save();
+        let comments_len = parser.comments.len();
         let cfws_before_dot = parser.pos;
         skip_cfws(parser, 0);
         let had_cfws_before_dot = parser.pos > cfws_before_dot;
         if !parser.eat('.') {
-            // No dot found — CFWS here is trailing (before @/>/EOF), not between
-            // atoms. Restore position; don't mark had_cfws since the CFWS is
-            // excluded from the span anyway.
+            // No dot — trailing CFWS before @/>/EOF. Restore position and
+            // undo tentative comment spans added by skip_cfws.
             parser.restore(save);
+            parser.comments.truncate(comments_len);
             break;
         }
         // Dot consumed — CFWS before the dot IS between atoms.
@@ -374,18 +379,22 @@ fn parse_dot_atom_local(parser: &mut Parser<'_>, allow_obs: bool) -> Result<Opti
         if !eat_atext_run(parser) && !try_quoted_string(parser) {
             return Err(parser.error(ErrorKind::EmptyLocalPart));
         }
-        atoms.push(&parser.input[atom_start..parser.pos]);
+        if count < MAX_ATOMS {
+            bounds[count] = (atom_start, parser.pos);
+            count += 1;
+        }
     }
 
     if had_cfws {
-        Ok(Some(atoms.join(".")))
+        let mut clean = String::with_capacity(bounds[count - 1].1 - bounds[0].0);
+        for (i, &(start, end)) in bounds[..count].iter().enumerate() {
+            if i > 0 {
+                clean.push('.');
+            }
+            clean.push_str(&parser.input[start..end]);
+        }
+        Ok(Some(clean))
     } else {
-        // No CFWS found — verify span is clean (debug sanity check).
-        debug_assert_eq!(
-            &parser.input[outer_start..parser.pos],
-            atoms.join("."),
-            "obs-local-part without CFWS should match raw span"
-        );
         Ok(None)
     }
 }
@@ -507,24 +516,30 @@ fn parse_dot_atom_domain(
         return Ok(None);
     }
 
-    // Obs mode: collect label spans for clean reconstruction.
-    let outer_start = parser.pos;
-    let mut labels: Vec<&str> = Vec::new();
+    // Obs mode: parse labels and track CFWS presence.
+    // Label boundaries stored on the stack to avoid heap allocation
+    // when no CFWS is present (the common case).
+    const MAX_LABELS: usize = 16; // DNS: max 127 labels, but 16 covers all real domains
+    let mut bounds: [(usize, usize); MAX_LABELS] = [(0, 0); MAX_LABELS];
+    let mut count = 0;
     let mut had_cfws = false;
 
     let label_start = parser.pos;
     parse_domain_label(parser)?;
-    labels.push(&parser.input[label_start..parser.pos]);
+    bounds[count] = (label_start, parser.pos);
+    count += 1;
 
     loop {
         let save = parser.save();
+        let comments_len = parser.comments.len();
         let cfws_before_dot = parser.pos;
         skip_cfws(parser, 0);
         let had_cfws_before_dot = parser.pos > cfws_before_dot;
         if !parser.eat('.') {
-            // No dot found — CFWS here is trailing (before >/EOF), not between
-            // labels. Restore position; don't mark had_cfws.
+            // No dot — trailing CFWS before >/EOF. Restore position and
+            // undo tentative comment spans added by skip_cfws.
             parser.restore(save);
+            parser.comments.truncate(comments_len);
             break;
         }
         // Dot consumed — CFWS before the dot IS between labels.
@@ -538,17 +553,22 @@ fn parse_dot_atom_domain(
         }
         let label_start = parser.pos;
         parse_domain_label(parser)?;
-        labels.push(&parser.input[label_start..parser.pos]);
+        if count < MAX_LABELS {
+            bounds[count] = (label_start, parser.pos);
+            count += 1;
+        }
     }
 
     if had_cfws {
-        Ok(Some(labels.join(".")))
+        let mut clean = String::with_capacity(bounds[count - 1].1 - bounds[0].0);
+        for (i, &(start, end)) in bounds[..count].iter().enumerate() {
+            if i > 0 {
+                clean.push('.');
+            }
+            clean.push_str(&parser.input[start..end]);
+        }
+        Ok(Some(clean))
     } else {
-        debug_assert_eq!(
-            &parser.input[outer_start..parser.pos],
-            labels.join("."),
-            "obs-domain without CFWS should match raw span"
-        );
         Ok(None)
     }
 }
@@ -1162,10 +1182,18 @@ mod tests {
     }
 
     #[test]
-    fn obs_local_part_leading_cfws_stripped() {
-        // Leading CFWS before first atom in obs-local-part.
-        let p = parse_ok_lax("(leading) user . name@example.com");
-        assert_eq!(p.local_part_str(), "user.name");
+    fn obs_leading_cfws_rejected_in_bare_addr_spec() {
+        // Leading CFWS before local-part is only valid in angle-bracket form,
+        // not bare addr-spec. obs-local-part CFWS stripping only applies
+        // between word segments, not before the first word.
+        let e = parse(
+            "(leading) user . name@example.com",
+            Strictness::Lax,
+            false,
+            false,
+        )
+        .expect_err("leading CFWS in bare addr-spec must be rejected");
+        assert_eq!(e.kind(), &ErrorKind::InvalidLocalPartChar { ch: '(' });
     }
 
     #[test]
