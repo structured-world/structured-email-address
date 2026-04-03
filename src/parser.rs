@@ -351,14 +351,19 @@ fn parse_dot_atom_local(parser: &mut Parser<'_>, allow_obs: bool) -> Result<Opti
     // Subsequent ".atom" segments
     loop {
         let save = parser.save();
-        let before = parser.pos;
+        let cfws_before_dot = parser.pos;
         skip_cfws(parser, 0);
-        if parser.pos > before {
-            had_cfws = true;
-        }
+        let had_cfws_before_dot = parser.pos > cfws_before_dot;
         if !parser.eat('.') {
+            // No dot found — CFWS here is trailing (before @/>/EOF), not between
+            // atoms. Restore position; don't mark had_cfws since the CFWS is
+            // excluded from the span anyway.
             parser.restore(save);
             break;
+        }
+        // Dot consumed — CFWS before the dot IS between atoms.
+        if had_cfws_before_dot {
+            had_cfws = true;
         }
         let before = parser.pos;
         skip_cfws(parser, 0);
@@ -513,14 +518,18 @@ fn parse_dot_atom_domain(
 
     loop {
         let save = parser.save();
-        let before = parser.pos;
+        let cfws_before_dot = parser.pos;
         skip_cfws(parser, 0);
-        if parser.pos > before {
-            had_cfws = true;
-        }
+        let had_cfws_before_dot = parser.pos > cfws_before_dot;
         if !parser.eat('.') {
+            // No dot found — CFWS here is trailing (before >/EOF), not between
+            // labels. Restore position; don't mark had_cfws.
             parser.restore(save);
             break;
+        }
+        // Dot consumed — CFWS before the dot IS between labels.
+        if had_cfws_before_dot {
+            had_cfws = true;
         }
         let before = parser.pos;
         skip_cfws(parser, 0);
@@ -1157,5 +1166,28 @@ mod tests {
         // Leading CFWS before first atom in obs-local-part.
         let p = parse_ok_lax("(leading) user . name@example.com");
         assert_eq!(p.local_part_str(), "user.name");
+    }
+
+    #[test]
+    fn obs_trailing_cfws_before_at_preserves_zero_copy() {
+        // Trailing CFWS before '@' is NOT between atoms — it's excluded from
+        // the span by backtracking. Must not trigger allocation.
+        let p = parse_ok_lax("user (trailing)@example.com");
+        assert!(
+            p.local_part_clean.is_none(),
+            "trailing CFWS before @ must not trigger allocation"
+        );
+        assert_eq!(p.local_part_str(), "user");
+    }
+
+    #[test]
+    fn obs_trailing_cfws_after_domain_preserves_zero_copy() {
+        // Trailing CFWS after domain is NOT between labels — must not allocate.
+        let p = parse_ok_lax("user@example.com (trailing)");
+        assert!(
+            p.domain_clean.is_none(),
+            "trailing CFWS after domain must not trigger allocation"
+        );
+        assert_eq!(p.domain_str(), "example.com");
     }
 }
