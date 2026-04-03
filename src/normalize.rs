@@ -161,8 +161,7 @@ fn unescape_quoted_string(s: &str) -> String {
         } else if ch == '\r' {
             // Collapse FWS (CRLF + WSP) to a single space.
             if chars.peek() == Some(&'\n') {
-                chars.next(); // consume '\n'
-                              // Skip all following WSP
+                chars.next(); // consume '\n', then skip all following WSP
                 while matches!(chars.peek(), Some(' ' | '\t')) {
                     chars.next();
                 }
