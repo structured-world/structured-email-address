@@ -363,7 +363,7 @@ fn parse_dot_atom_local(parser: &mut Parser<'_>, allow_obs: bool) -> Result<Opti
             break;
         }
         if had_cfws_before_dot && clean.is_none() {
-            let mut s = String::with_capacity(64);
+            let mut s = String::with_capacity(parser.input.len().saturating_sub(outer_start));
             s.push_str(&parser.input[outer_start..last_clean_end]);
             clean = Some(s);
         }
@@ -371,7 +371,7 @@ fn parse_dot_atom_local(parser: &mut Parser<'_>, allow_obs: bool) -> Result<Opti
         // If CFWS after dot and we haven't started clean yet, seed with
         // content before the dot — the dot is appended below via push('.').
         if clean.is_none() && parser.pos > last_clean_end + 1 {
-            let mut s = String::with_capacity(64);
+            let mut s = String::with_capacity(parser.input.len().saturating_sub(outer_start));
             s.push_str(&parser.input[outer_start..last_clean_end]);
             clean = Some(s);
         }
@@ -525,13 +525,13 @@ fn parse_dot_atom_domain(
             break;
         }
         if had_cfws_before_dot && clean.is_none() {
-            let mut s = String::with_capacity(64);
+            let mut s = String::with_capacity(parser.input.len().saturating_sub(outer_start));
             s.push_str(&parser.input[outer_start..last_clean_end]);
             clean = Some(s);
         }
         skip_cfws(parser, 0);
         if clean.is_none() && parser.pos > last_clean_end + 1 {
-            let mut s = String::with_capacity(64);
+            let mut s = String::with_capacity(parser.input.len().saturating_sub(outer_start));
             s.push_str(&parser.input[outer_start..last_clean_end]);
             clean = Some(s);
         }
@@ -1155,17 +1155,17 @@ mod tests {
     }
 
     #[test]
-    fn obs_leading_cfws_rejected_in_bare_addr_spec() {
-        // Leading CFWS before local-part is only valid in angle-bracket form,
-        // not bare addr-spec. obs-local-part CFWS stripping only applies
-        // between word segments, not before the first word.
+    fn obs_leading_comment_rejected_in_bare_addr_spec() {
+        // Leading RFC 5322 comments before local-part are rejected in bare
+        // addr-spec. Note: leading plain whitespace is handled by input.trim()
+        // before parsing, so this test covers comments specifically.
         let e = parse(
             "(leading) user . name@example.com",
             Strictness::Lax,
             false,
             false,
         )
-        .expect_err("leading CFWS in bare addr-spec must be rejected");
+        .expect_err("leading comment in bare addr-spec must be rejected");
         assert_eq!(e.kind(), &ErrorKind::InvalidLocalPartChar { ch: '(' });
     }
 
@@ -1186,23 +1186,35 @@ mod tests {
     #[test]
     fn obs_trailing_cfws_before_at_preserves_zero_copy() {
         // Trailing CFWS before '@' is NOT between atoms — it's excluded from
-        // the span by backtracking. Must not trigger allocation.
+        // the span by backtracking. Must not trigger allocation or duplicate
+        // comment spans.
         let p = parse_ok_lax("user (trailing)@example.com");
         assert!(
             p.local_part_clean.is_none(),
             "trailing CFWS before @ must not trigger allocation"
         );
         assert_eq!(p.local_part_str(), "user");
+        assert_eq!(
+            p.comments.len(),
+            1,
+            "backtracked comment must not be duplicated"
+        );
     }
 
     #[test]
     fn obs_trailing_cfws_after_domain_preserves_zero_copy() {
-        // Trailing CFWS after domain is NOT between labels — must not allocate.
+        // Trailing CFWS after domain is NOT between labels — must not allocate
+        // or duplicate comment spans.
         let p = parse_ok_lax("user@example.com (trailing)");
         assert!(
             p.domain_clean.is_none(),
             "trailing CFWS after domain must not trigger allocation"
         );
         assert_eq!(p.domain_str(), "example.com");
+        assert_eq!(
+            p.comments.len(),
+            1,
+            "backtracked comment must not be duplicated"
+        );
     }
 }
