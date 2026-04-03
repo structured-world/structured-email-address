@@ -578,7 +578,7 @@ fn skip_cfws(parser: &mut Parser<'_>, depth: usize) {
                         // Consume CRLF
                         parser.advance(); // '\r'
                         parser.advance(); // '\n'
-                                          // Consume at least one following WSP, and any additional WSP
+                        // Consume at least one following WSP, and any additional WSP
                         while let Some(wch) = parser.peek() {
                             if is_wsp(wch) {
                                 parser.advance();
