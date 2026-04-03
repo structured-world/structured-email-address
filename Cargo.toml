@@ -34,7 +34,5 @@ criterion = { version = "0.8", features = ["html_reports"] }
 name = "email"
 harness = false
 
-[lints.clippy]
-unwrap_used = "deny"
-expect_used = "deny"
-panic = "deny"
+# Lints for production code are set via cfg_attr(not(test)) in lib.rs,
+# which correctly excludes test code from deny(unwrap_used, expect_used, panic).
