@@ -91,7 +91,10 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normaliz
     };
 
     // Step 7: IDNA roundtrip — recover Unicode domain when punycode is present.
-    let domain_unicode = if canonical_domain.contains("xn--") {
+    let domain_unicode = if canonical_domain
+        .split('.')
+        .any(|label| label.starts_with("xn--"))
+    {
         let (unicode, result) = idna::domain_to_unicode(&canonical_domain);
         if result.is_ok() && unicode != canonical_domain {
             Some(unicode)

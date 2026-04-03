@@ -117,11 +117,11 @@ impl EmailAddress {
         &self.domain
     }
 
-    /// The domain in Unicode form.
+    /// The canonical domain in Unicode form.
     ///
     /// For internationalized domains (`münchen.de` → `xn--mnchen-3ya.de`),
-    /// returns the original Unicode representation. For ASCII-only domains,
-    /// returns the same value as [`domain()`](Self::domain).
+    /// returns the Unicode form of the canonical domain. For ASCII-only
+    /// domains, returns the same value as [`domain()`](Self::domain).
     ///
     /// ```
     /// use structured_email_address::EmailAddress;
