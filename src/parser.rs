@@ -287,7 +287,12 @@ fn parse_dot_atom_local(parser: &mut Parser<'_>, allow_obs: bool) -> Result<(), 
             return Err(parser.error(ErrorKind::EmptyLocalPart));
         }
     } else if !eat_atext_run(parser) {
-        return Err(parser.error(ErrorKind::EmptyLocalPart));
+        return Err(match parser.peek() {
+            // Non-atext char present → report the offending character.
+            Some(ch) if ch != '@' => parser.error(ErrorKind::InvalidLocalPartChar { ch }),
+            // Truly empty (at `@` or EOF).
+            _ => parser.error(ErrorKind::EmptyLocalPart),
+        });
     }
 
     // Subsequent ".atom" segments
@@ -945,9 +950,8 @@ mod tests {
             false,
         )
         .expect_err("Strict mode must reject leading comment");
-        // Leading `(` is not valid atext — parser consumes zero atext chars
-        // and returns EmptyLocalPart.
-        assert_eq!(e.kind(), &ErrorKind::EmptyLocalPart);
+        // Leading `(` is not valid atext — parser reports the offending char.
+        assert_eq!(e.kind(), &ErrorKind::InvalidLocalPartChar { ch: '(' });
     }
 
     #[test]
