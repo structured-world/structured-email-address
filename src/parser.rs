@@ -368,11 +368,11 @@ fn parse_dot_atom_local(parser: &mut Parser<'_>, allow_obs: bool) -> Result<Opti
             clean = Some(s);
         }
         skip_cfws(parser, 0);
-        // If CFWS after dot and we haven't started clean yet, the prefix
-        // extends through the dot (last_clean_end + 1 byte for '.').
+        // If CFWS after dot and we haven't started clean yet, seed with
+        // content before the dot — the dot is appended below via push('.').
         if clean.is_none() && parser.pos > last_clean_end + 1 {
             let mut s = String::with_capacity(64);
-            s.push_str(&parser.input[outer_start..last_clean_end + 1]);
+            s.push_str(&parser.input[outer_start..last_clean_end]);
             clean = Some(s);
         }
         let atom_start = parser.pos;
@@ -532,7 +532,7 @@ fn parse_dot_atom_domain(
         skip_cfws(parser, 0);
         if clean.is_none() && parser.pos > last_clean_end + 1 {
             let mut s = String::with_capacity(64);
-            s.push_str(&parser.input[outer_start..last_clean_end + 1]);
+            s.push_str(&parser.input[outer_start..last_clean_end]);
             clean = Some(s);
         }
         let label_start = parser.pos;
@@ -1167,6 +1167,20 @@ mod tests {
         )
         .expect_err("leading CFWS in bare addr-spec must be rejected");
         assert_eq!(e.kind(), &ErrorKind::InvalidLocalPartChar { ch: '(' });
+    }
+
+    #[test]
+    fn obs_local_cfws_after_dot_no_double_dots() {
+        // CFWS only after dot: "user. name" must produce "user.name", not "user..name".
+        let p = parse_ok_lax("user. name@example.com");
+        assert_eq!(p.local_part_str(), "user.name");
+    }
+
+    #[test]
+    fn obs_domain_cfws_after_dot_no_double_dots() {
+        // CFWS only after dot: "example. com" must produce "example.com", not "example..com".
+        let p = parse_ok_lax("user@example. com");
+        assert_eq!(p.domain_str(), "example.com");
     }
 
     #[test]
