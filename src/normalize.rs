@@ -19,6 +19,8 @@ pub(crate) struct Normalized {
     pub tag: Option<String>,
     /// Canonical domain (after IDNA encoding, case folding).
     pub domain: String,
+    /// Unicode form of the domain (only populated when domain has punycode labels).
+    pub domain_unicode: Option<String>,
     /// Display name from the original, if present.
     pub display_name: Option<String>,
     /// Confusable skeleton of the local part (for homoglyph detection).
@@ -88,7 +90,22 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normaliz
         })?
     };
 
-    // Step 7: Anti-homoglyph skeleton (optional).
+    // Step 7: IDNA roundtrip — recover Unicode domain when punycode is present.
+    let domain_unicode = if canonical_domain
+        .split('.')
+        .any(|label| label.starts_with("xn--"))
+    {
+        let (unicode, result) = idna::domain_to_unicode(&canonical_domain);
+        if result.is_ok() && unicode != canonical_domain {
+            Some(unicode)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Step 8: Anti-homoglyph skeleton (optional).
     let skel = if config.check_confusables {
         Some(confusable_skeleton(&local_after_dots))
     } else {
@@ -105,6 +122,7 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normaliz
         local_part: local_after_dots,
         tag,
         domain: canonical_domain,
+        domain_unicode,
         display_name,
         skeleton: skel,
     })
@@ -146,8 +164,7 @@ fn unescape_quoted_string(s: &str) -> String {
         } else if ch == '\r' {
             // Collapse FWS (CRLF + WSP) to a single space.
             if chars.peek() == Some(&'\n') {
-                chars.next(); // consume '\n'
-                // Skip all following WSP
+                chars.next(); // consume '\n', then skip all following WSP
                 while matches!(chars.peek(), Some(' ' | '\t')) {
                     chars.next();
                 }
@@ -239,6 +256,15 @@ mod tests {
         let config = Config::default();
         let n = parse_and_normalize("user@münchen.de", &config);
         assert_eq!(n.domain, "xn--mnchen-3ya.de");
+        assert_eq!(n.domain_unicode.as_deref(), Some("münchen.de"));
+    }
+
+    #[test]
+    fn ascii_domain_no_unicode_field() {
+        let config = Config::default();
+        let n = parse_and_normalize("user@example.com", &config);
+        assert_eq!(n.domain, "example.com");
+        assert_eq!(n.domain_unicode, None);
     }
 
     #[test]
