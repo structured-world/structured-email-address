@@ -945,17 +945,9 @@ mod tests {
             false,
         )
         .expect_err("Strict mode must reject leading comment");
-        // Leading `(` is not valid atext, so parser sees it as invalid local-part char.
-        assert!(
-            matches!(
-                e.kind(),
-                ErrorKind::EmptyLocalPart
-                    | ErrorKind::Unexpected { .. }
-                    | ErrorKind::InvalidLocalPartChar { .. }
-            ),
-            "expected local-part or unexpected error, got {:?}",
-            e.kind()
-        );
+        // Leading `(` is not valid atext — parser consumes zero atext chars
+        // and returns EmptyLocalPart.
+        assert_eq!(e.kind(), &ErrorKind::EmptyLocalPart);
     }
 
     #[test]
