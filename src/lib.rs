@@ -123,6 +123,18 @@ impl EmailAddress {
     /// returns the Unicode form of the canonical domain. For ASCII-only
     /// domains, returns the same value as [`domain()`](Self::domain).
     ///
+    /// # Security
+    ///
+    /// The Unicode form is intended for **display only**. It may reintroduce
+    /// [IDN homograph attacks](https://en.wikipedia.org/wiki/IDN_homograph_attack)
+    /// where visually similar characters from different scripts produce
+    /// different domain names (e.g. Cyrillic `а` vs Latin `a`).
+    ///
+    /// For security-sensitive comparisons (allow-lists, deduplication, access
+    /// control), always use [`domain()`](Self::domain) which returns the
+    /// ACE/Punycode form. If you must compare Unicode domains, apply your own
+    /// confusable-detection logic (see [`confusable_skeleton()`]).
+    ///
     /// ```
     /// use structured_email_address::EmailAddress;
     ///
