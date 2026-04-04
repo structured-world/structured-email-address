@@ -1,6 +1,6 @@
 [package]
 name = "structured-email-address"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 rust-version = "1.92"
 authors = ["Structured World Foundation <foundation@sw.foundation>"]
