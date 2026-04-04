@@ -29,20 +29,21 @@ pub(crate) struct Normalized {
 
 /// Normalize a parsed email address according to the given config.
 pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normalized, Error> {
-    let raw_local = parsed.local_part.as_str(parsed.input);
-    let raw_domain = parsed.domain.as_str(parsed.input);
-    let is_quoted = raw_local.starts_with('"') && raw_local.ends_with('"');
+    // Semantic local-part and domain: CFWS-stripped for obs-forms, raw span otherwise.
+    let local = parsed.local_part_str();
+    let domain_str = parsed.domain_str();
+    let is_quoted = local.starts_with('"') && local.ends_with('"');
 
     // Strip quotes and unescape RFC quoted-pairs from quoted-string local parts.
     let unquoted_local = if is_quoted {
-        unescape_quoted_string(&raw_local[1..raw_local.len() - 1])
+        unescape_quoted_string(&local[1..local.len() - 1])
     } else {
-        raw_local.to_string()
+        local.to_string()
     };
 
     // Step 1: Unicode NFC normalization.
     let nfc_local: String = unquoted_local.nfc().collect();
-    let nfc_domain: String = raw_domain.nfc().collect();
+    let nfc_domain: String = domain_str.nfc().collect();
 
     // Step 2: Case folding.
     let cased_local = match config.case_policy {
@@ -284,6 +285,8 @@ mod tests {
                 end: input.len(),
             },
             comments: vec![],
+            local_part_clean: None,
+            domain_clean: None,
         };
         let err = normalize(&parsed, &config).unwrap_err();
         assert!(
@@ -352,5 +355,29 @@ mod tests {
         assert_eq!(n.tag, Some("promo".to_string()));
         assert_eq!(n.domain, "gmail.com");
         assert!(n.skeleton.is_some());
+    }
+
+    #[test]
+    fn obs_cfws_stripped_before_normalization() {
+        // Verify that CFWS-stripped content flows through case folding.
+        let config = Config::builder()
+            .strictness(crate::Strictness::Lax)
+            .lowercase_all()
+            .build();
+        let n = parse_and_normalize("User (comment) . Name@Example (c) . COM", &config);
+        assert_eq!(n.local_part, "user.name", "CFWS stripped + lowercased");
+        assert_eq!(n.domain, "example.com", "domain CFWS stripped + lowercased");
+    }
+
+    #[test]
+    fn obs_cfws_stripped_with_idna() {
+        // Verify CFWS stripping flows through IDNA encoding.
+        let config = Config::builder()
+            .strictness(crate::Strictness::Lax)
+            .lowercase_all()
+            .build();
+        let n = parse_and_normalize("user@münchen (comment) . de", &config);
+        assert_eq!(n.domain, "xn--mnchen-3ya.de");
+        assert_eq!(n.domain_unicode.as_deref(), Some("münchen.de"));
     }
 }

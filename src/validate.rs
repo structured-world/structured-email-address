@@ -23,23 +23,21 @@ pub(crate) fn validate(
 ) -> Result<(), Error> {
     let domain = &normalized.domain;
 
-    // Length limits apply to the RAW addr-spec (RFC 5321 §4.5.3.1),
-    // not the normalized form (which may be shorter after tag/dot stripping).
-    let raw_local = parsed.local_part.as_str(parsed.input);
-    let raw_domain = parsed.domain.as_str(parsed.input);
+    // Length limits apply to the semantic addr-spec content (RFC 5321 §4.5.3.1),
+    // with CFWS stripped (obs-forms), but before normalization (tag/dot stripping).
+    let local = parsed.local_part_str();
+    let domain_str = parsed.domain_str();
 
     // Length: local part (max 64 octets).
-    if raw_local.len() > MAX_LOCAL_PART_LEN {
+    if local.len() > MAX_LOCAL_PART_LEN {
         return Err(Error::new(
-            ErrorKind::LocalPartTooLong {
-                len: raw_local.len(),
-            },
+            ErrorKind::LocalPartTooLong { len: local.len() },
             parsed.local_part.start,
         ));
     }
 
     // Length: total address (max 254 octets).
-    let total = raw_local.len() + 1 + raw_domain.len();
+    let total = local.len() + 1 + domain_str.len();
     if total > MAX_ADDRESS_LEN {
         return Err(Error::new(
             ErrorKind::AddressTooLong { len: total },
@@ -48,7 +46,7 @@ pub(crate) fn validate(
     }
 
     // Domain literals like [192.168.1.1] get special handling below.
-    let is_domain_literal = raw_domain.starts_with('[');
+    let is_domain_literal = domain_str.starts_with('[');
 
     // Domain must have at least one dot (unless configured otherwise).
     if config.require_tld_dot && !domain.contains('.') && !is_domain_literal {
