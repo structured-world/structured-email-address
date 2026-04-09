@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4](https://github.com/structured-world/structured-email-address/compare/v0.0.3...v0.0.4) - 2026-04-04
+
+### Fixed
+
+- *(parser)* strip CFWS from obs-local-part and obs-domain spans ([#32](https://github.com/structured-world/structured-email-address/pull/32))
+
 ## [0.0.3](https://github.com/structured-world/structured-email-address/compare/v0.0.2...v0.0.3) - 2026-04-03
 
 ### Documentation
