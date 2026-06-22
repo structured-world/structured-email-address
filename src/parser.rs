@@ -63,11 +63,6 @@ impl Span {
     pub fn as_str<'a>(&self, input: &'a str) -> &'a str {
         &input[self.start..self.end]
     }
-
-    #[allow(dead_code)]
-    pub fn len(&self) -> usize {
-        self.end - self.start
-    }
 }
 
 /// Parser state: tracks current position in the input.
@@ -161,15 +156,12 @@ pub(crate) fn parse(
         None
     };
 
+    // `is_angle` is set only when '<' is the current character: the display-name
+    // parsers stop exactly at it, and the bare case tests `peek() == '<'`. So the
+    // opening bracket is always present and consumed here.
     let is_angle = display_name.is_some() || parser.peek() == Some('<');
     if is_angle {
-        // Skip optional CFWS before <
-        skip_cfws(&mut parser, 0);
-        if !parser.eat('<') {
-            return Err(parser.error(ErrorKind::Unexpected {
-                ch: parser.peek().unwrap_or('\0'),
-            }));
-        }
+        parser.eat('<');
     }
 
     // Parse addr-spec: local-part "@" domain.
@@ -305,15 +297,11 @@ fn parse_local_part(
         // followed by optional "." word segments.
     }
 
-    // dot-atom (or obs-local-part if Lax)
+    // dot-atom (or obs-local-part if Lax). parse_dot_atom_local always consumes
+    // at least one token or returns an error, so the span is never empty here.
     let clean = parse_dot_atom_local(parser, allow_obs)?;
 
-    let end = parser.pos;
-    if end == start {
-        return Err(parser.error(ErrorKind::EmptyLocalPart));
-    }
-
-    Ok((Span::new(start, end), clean))
+    Ok((Span::new(start, parser.pos), clean))
 }
 
 /// Parse dot-atom for local-part: `atext+ ("." atext+)*`.
@@ -486,16 +474,12 @@ fn parse_domain(
         return Ok((Span::new(start, parser.pos), None));
     }
 
-    // dot-atom domain
+    // dot-atom domain. parse_dot_atom_domain parses at least one label or
+    // returns an error, so the span is never empty here.
     let allow_obs = matches!(strictness, Strictness::Lax);
     let clean = parse_dot_atom_domain(parser, allow_obs)?;
 
-    let end = parser.pos;
-    if end == start {
-        return Err(parser.error(ErrorKind::EmptyDomain));
-    }
-
-    Ok((Span::new(start, end), clean))
+    Ok((Span::new(start, parser.pos), clean))
 }
 
 /// Parse dot-atom for domain: `label ("." label)*` where label avoids leading/trailing hyphen.
@@ -688,11 +672,9 @@ fn try_eat_fws(parser: &mut Parser<'_>) -> bool {
     }
 }
 
-/// Skip CFWS (comments and folding whitespace).
+/// Skip CFWS (comments and folding whitespace). `depth` seeds the comment
+/// nesting counter; recursion is bounded by [`parse_comment`].
 fn skip_cfws(parser: &mut Parser<'_>, depth: usize) {
-    if depth >= MAX_RECURSION_DEPTH {
-        return;
-    }
     loop {
         // Skip whitespace and RFC 5322 Folding White Space (CRLF + WSP).
         loop {
@@ -1481,5 +1463,80 @@ mod tests {
         assert_eq!(e.kind(), &ErrorKind::InvalidQuotedPair);
         // Lax also rejects it (after backtracking the obs-local-part attempt).
         assert!(parse("\"test\\\u{a9}\"@iana.org", Strictness::Lax, false, false).is_err());
+    }
+
+    // ── FWS / recursion / quoted-string edge paths ──
+
+    #[test]
+    fn quoted_string_consumes_consecutive_wsp() {
+        // Two spaces in a row exercise the multi-WSP loop in try_eat_fws.
+        let p = parse("\"a  b\"@example.com", Strictness::Standard, false, false)
+            .unwrap_or_else(|e| panic!("quoted string with double space: {e}"));
+        assert_eq!(p.local_part.as_str(p.input), "\"a  b\"");
+    }
+
+    #[test]
+    fn parse_quoted_string_requires_open_quote() {
+        // Defensive contract: errors when not invoked at a '"'.
+        let mut parser = Parser::new("x");
+        assert_eq!(
+            parse_quoted_string(&mut parser, false).unwrap_err().kind(),
+            &ErrorKind::UnterminatedQuotedString
+        );
+    }
+
+    #[test]
+    fn deeply_nested_comment_is_rejected() {
+        // Comment nesting beyond MAX_RECURSION_DEPTH is rejected (DoS guard).
+        let input = format!(
+            "{}x{}test@iana.org",
+            "(".repeat(MAX_RECURSION_DEPTH + 2),
+            ")".repeat(MAX_RECURSION_DEPTH + 2)
+        );
+        assert!(parse(&input, Strictness::Lax, false, false).is_err());
+    }
+
+    // ── Display-name parsing paths (allow_display_name = true) ──
+
+    #[test]
+    fn quoted_local_part_not_treated_as_display_name() {
+        // A quoted string with no following '<' is the local-part, not a
+        // display name — try_parse_display_name backtracks.
+        let p = parse("\"quoted\"@example.com", Strictness::Standard, true, false)
+            .unwrap_or_else(|e| panic!("quoted local with display_name enabled: {e}"));
+        assert_eq!(p.display_name, None);
+        assert_eq!(p.local_part.as_str(p.input), "\"quoted\"");
+    }
+
+    #[test]
+    fn malformed_quoted_display_name_backtracks() {
+        // An unterminated quoted string in display position backtracks, then
+        // fails as a quoted local-part.
+        let e = parse(
+            "\"unterminated@example.com",
+            Strictness::Standard,
+            true,
+            false,
+        )
+        .expect_err("unterminated quoted must fail");
+        assert_eq!(e.kind(), &ErrorKind::UnterminatedQuotedString);
+    }
+
+    #[test]
+    fn control_char_aborts_display_name_scan() {
+        // A control character aborts the unquoted display-name scan; parsing
+        // then falls back to addr-spec and rejects the control char.
+        let e = parse("\u{01}user@example.com", Strictness::Standard, true, false)
+            .expect_err("control char must be rejected");
+        assert_eq!(e.kind(), &ErrorKind::InvalidLocalPartChar { ch: '\u{01}' });
+    }
+
+    #[test]
+    fn unquoted_text_without_angle_is_not_display_name() {
+        // Unquoted text reaching end-of-input with no '<' is not a display
+        // name; it is parsed as an addr-spec, which here lacks '@'.
+        let e = parse("plainname", Strictness::Standard, true, false)
+            .expect_err("bare text without '@' must fail");
+        assert_eq!(e.kind(), &ErrorKind::MissingAtSign);
     }
 }
