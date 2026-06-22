@@ -338,8 +338,9 @@ fn parse_dot_atom_local(parser: &mut Parser<'_>, allow_obs: bool) -> Result<Opti
     let mut clean: Option<String> = None;
     let outer_start = parser.pos;
 
-    // First word: no leading CFWS — bare addr-spec does not permit CFWS
-    // before the local-part. CFWS stripping only applies between segments.
+    // First word: any leading CFWS was already consumed by the caller (`parse`
+    // skips it before the local-part). CFWS stripping here applies only between
+    // segments, so the first word starts immediately.
     if !eat_atext_run(parser) && !try_quoted_string(parser, allow_obs) {
         return Err(match parser.peek() {
             Some(ch) if ch != '@' => parser.error(ErrorKind::InvalidLocalPartChar { ch }),
@@ -836,7 +837,7 @@ fn is_quoted_pair_char(ch: char, allow_obs: bool) -> bool {
 }
 
 /// obs-NO-WS-CTL (RFC 5322 §4.1): control chars usable in obsolete qtext and
-/// quoted-pairs — %d1-8, %d11, %d12, %d14-31, %d127 (excludes TAB, LF, CR).
+/// quoted-pairs — %d1-8, %d11, %d12, %d14-31, %d127 (excludes NUL, TAB, LF, CR).
 fn is_obs_no_ws_ctl(ch: char) -> bool {
     matches!(ch as u32, 0x01..=0x08 | 0x0b | 0x0c | 0x0e..=0x1f | 0x7f)
 }
