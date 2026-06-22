@@ -1345,6 +1345,14 @@ mod tests {
     }
 
     #[test]
+    fn comment_may_contain_folding_whitespace() {
+        // A comment may fold across lines: CRLF + WSP is valid FWS inside it.
+        let p = parse("(a\r\n b)test@iana.org", Strictness::Lax, false, false)
+            .unwrap_or_else(|e| panic!("folded comment must parse: {e}"));
+        assert_eq!(p.local_part_str(), "test");
+    }
+
+    #[test]
     fn accepts_valid_folding_whitespace() {
         // FWS = CRLF followed by WSP — valid leading and trailing.
         let leading = parse(" \r\n test@iana.org", Strictness::Lax, false, false)
@@ -1404,7 +1412,32 @@ mod tests {
                 &ErrorKind::InvalidAddressLiteral,
                 "wrong error for {bad}"
             );
+            assert!(
+                e.to_string().contains("address literal"),
+                "unexpected Display for {bad}: {e}"
+            );
         }
+    }
+
+    #[test]
+    fn parse_domain_literal_requires_open_bracket() {
+        // Defensive contract: the helper errors if called without a leading '['
+        // (callers only invoke it after peeking '[').
+        let mut parser = Parser::new("nope");
+        assert_eq!(
+            parse_domain_literal(&mut parser).unwrap_err().kind(),
+            &ErrorKind::UnterminatedDomainLiteral
+        );
+    }
+
+    #[test]
+    fn is_qtext_excludes_quote_and_backslash() {
+        // '"' and '\\' are never qtext even though '"' is printable ASCII —
+        // they are structural delimiters handled before is_qtext is consulted.
+        assert!(!is_qtext('"', false));
+        assert!(!is_qtext('"', true));
+        assert!(!is_qtext('\\', true));
+        assert!(is_qtext('a', false));
     }
 
     // ── obs-qp / obs-qtext (Lax only) ──
