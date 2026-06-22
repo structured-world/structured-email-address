@@ -42,6 +42,9 @@ pub enum ErrorKind {
     UnterminatedComment,
     /// Unterminated domain literal `[...]`.
     UnterminatedDomainLiteral,
+    /// Domain literal `[...]` is not a valid IPv4 or `IPv6:` address literal
+    /// (RFC 5321 §4.1.3). General domain literals are not accepted.
+    InvalidAddressLiteral,
     /// IDNA encoding failed for domain.
     IdnaError(String),
     /// Domain not in Public Suffix List (when PSL validation enabled).
@@ -97,6 +100,12 @@ impl fmt::Display for Error {
             ErrorKind::InvalidQuotedPair => write!(f, "invalid quoted-pair escape"),
             ErrorKind::UnterminatedComment => write!(f, "unterminated comment"),
             ErrorKind::UnterminatedDomainLiteral => write!(f, "unterminated domain literal"),
+            ErrorKind::InvalidAddressLiteral => {
+                write!(
+                    f,
+                    "domain literal is not a valid IPv4 or IPv6 address literal"
+                )
+            }
             ErrorKind::IdnaError(msg) => write!(f, "IDNA encoding failed: {msg}"),
             ErrorKind::UnknownTld(tld) => write!(f, "unknown TLD: .{tld}"),
             ErrorKind::Unexpected { ch } => {

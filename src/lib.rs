@@ -55,7 +55,7 @@ pub use normalize::confusable_skeleton;
 /// Immutable after construction. All accessors return borrowed data.
 #[derive(Debug, Clone)]
 pub struct EmailAddress {
-    /// Original input (trimmed).
+    /// Original input, exactly as supplied to the parser.
     original: String,
     /// Canonical local part (after normalization).
     local_part: String,
@@ -167,7 +167,7 @@ impl EmailAddress {
         }
     }
 
-    /// The original input (trimmed).
+    /// The original input, exactly as supplied to the parser (not trimmed).
     pub fn original(&self) -> &str {
         &self.original
     }
@@ -499,6 +499,39 @@ mod tests {
         assert_eq!(email.display_name(), Some("John Doe"));
         assert_eq!(email.local_part(), "user");
         assert_eq!(email.domain(), "example.com");
+    }
+
+    #[test]
+    fn leading_comment_full_pipeline() {
+        // #40: a leading RFC 5322 comment before the local-part must parse
+        // end-to-end, with the comment stripped from the canonical address.
+        let config = Config::builder()
+            .strictness(Strictness::Lax)
+            .allow_display_name()
+            .allow_domain_literal()
+            .allow_single_label_domain()
+            .lowercase_all()
+            .build();
+
+        for input in [
+            "(comment)jane.smith@example.com",
+            "jane(comment).smith@example.com",
+            "jane.smith(comment)@example.com",
+            "jane.smith@example.com",
+        ] {
+            let email = EmailAddress::parse_with(input, &config)
+                .unwrap_or_else(|e| panic!("'{input}' must parse: {e}"));
+            assert_eq!(email.canonical(), "jane.smith@example.com");
+        }
+    }
+
+    #[test]
+    fn rejects_newline_in_address() {
+        // Header-injection hardening: a trailing newline must not be silently
+        // accepted (it previously survived an over-eager input.trim()).
+        let config = Config::default();
+        assert!("user@example.com\n".parse::<EmailAddress>().is_err());
+        assert!(EmailAddress::parse_with("user@example.com\r\n", &config).is_err());
     }
 
     // ── Serde ──
