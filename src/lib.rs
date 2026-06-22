@@ -501,6 +501,37 @@ mod tests {
         assert_eq!(email.domain(), "example.com");
     }
 
+    #[test]
+    fn leading_comment_full_pipeline() {
+        // Regression test for #40: a leading RFC 5322 comment before the
+        // local-part must parse end-to-end (parse + normalize + validate),
+        // with the comment stripped from the canonical address.
+        let config = Config::builder()
+            .strictness(Strictness::Lax)
+            .allow_display_name()
+            .allow_domain_literal()
+            .allow_single_label_domain()
+            .lowercase_all()
+            .build();
+
+        let email = EmailAddress::parse_with("(comment)jane.smith@example.com", &config)
+            .unwrap_or_else(|e| panic!("leading comment must parse: {e}"));
+        assert_eq!(email.canonical(), "jane.smith@example.com");
+        assert_eq!(email.local_part(), "jane.smith");
+        assert_eq!(email.domain(), "example.com");
+
+        // The other three cases from the issue must also succeed.
+        for input in [
+            "jane.smith@example.com",
+            "jane(comment).smith@example.com",
+            "jane.smith(comment)@example.com",
+        ] {
+            let email = EmailAddress::parse_with(input, &config)
+                .unwrap_or_else(|e| panic!("'{input}' must parse: {e}"));
+            assert_eq!(email.canonical(), "jane.smith@example.com");
+        }
+    }
+
     // ── Serde ──
 
     #[cfg(feature = "serde")]

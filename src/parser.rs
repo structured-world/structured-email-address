@@ -168,7 +168,15 @@ pub(crate) fn parse(
         }
     }
 
-    // Parse addr-spec: local-part "@" domain
+    // Parse addr-spec: local-part "@" domain.
+    // RFC 5322 §3.2.3: local-part dot-atom permits leading [CFWS]
+    // (`dot-atom = [CFWS] dot-atom-text [CFWS]`), so a comment or folding
+    // whitespace before the local-part is valid. Strip it in Standard/Lax;
+    // RFC 5321 Strict forbids CFWS entirely, so leave any '(' for
+    // parse_local_part to reject as an invalid local-part character.
+    if !matches!(strictness, Strictness::Strict) {
+        skip_cfws(&mut parser, 0);
+    }
     let (local_part, local_part_clean) = parse_local_part(&mut parser, strictness)?;
     // RFC 5322 allows CFWS around "@" in Standard/Lax modes.
     if !matches!(strictness, Strictness::Strict) {
@@ -1155,18 +1163,20 @@ mod tests {
     }
 
     #[test]
-    fn obs_leading_comment_rejected_in_bare_addr_spec() {
-        // Leading RFC 5322 comments before local-part are rejected in bare
-        // addr-spec. Note: leading plain whitespace is handled by input.trim()
-        // before parsing, so this test covers comments specifically.
-        let e = parse(
+    fn obs_leading_comment_accepted_in_bare_addr_spec() {
+        // RFC 5322 §3.2.3: local-part dot-atom permits leading [CFWS]
+        // (`dot-atom = [CFWS] dot-atom-text [CFWS]`), so a comment before the
+        // local-part is valid and stripped from the semantic value. Combined
+        // here with obs CFWS between atoms. Regression test for #40.
+        let p = parse(
             "(leading) user . name@example.com",
             Strictness::Lax,
             false,
             false,
         )
-        .expect_err("leading comment in bare addr-spec must be rejected");
-        assert_eq!(e.kind(), &ErrorKind::InvalidLocalPartChar { ch: '(' });
+        .unwrap_or_else(|e| panic!("leading comment must be accepted: {e}"));
+        assert_eq!(p.local_part_str(), "user.name");
+        assert_eq!(p.domain_str(), "example.com");
     }
 
     #[test]
@@ -1216,5 +1226,77 @@ mod tests {
             1,
             "backtracked comment must not be duplicated"
         );
+    }
+
+    // ── Regression tests for #40: leading CFWS before local-part ──
+
+    #[test]
+    fn leading_comment_accepted_standard() {
+        // RFC 5322 §3.2.3: dot-atom = [CFWS] dot-atom-text [CFWS]. Leading CFWS
+        // is part of the base grammar, so Standard mode must accept it.
+        let p = parse_ok("(comment)jane.smith@example.com");
+        assert_eq!(p.local_part_str(), "jane.smith");
+        assert_eq!(p.domain_str(), "example.com");
+    }
+
+    #[test]
+    fn leading_comment_accepted_lax() {
+        // The exact scenario from issue #40, in Lax mode.
+        let p = parse_ok_lax("(comment)jane.smith@example.com");
+        assert_eq!(p.local_part_str(), "jane.smith");
+        assert_eq!(p.domain_str(), "example.com");
+    }
+
+    #[test]
+    fn leading_comment_with_spaces_accepted() {
+        // CFWS may mix comments and folding whitespace: "( c ) " before local.
+        let p = parse_ok("( c ) user@example.com");
+        assert_eq!(p.local_part_str(), "user");
+        assert_eq!(p.domain_str(), "example.com");
+    }
+
+    #[test]
+    fn leading_comment_in_angle_addr() {
+        // angle-addr: leading CFWS inside "<...>" before the local-part is also
+        // valid (addr-spec local-part dot-atom permits [CFWS]).
+        let p = parse(
+            "<(comment)user@example.com>",
+            Strictness::Standard,
+            false,
+            false,
+        )
+        .unwrap_or_else(|e| panic!("leading comment in angle-addr must parse: {e}"));
+        assert_eq!(p.local_part_str(), "user");
+        assert_eq!(p.domain_str(), "example.com");
+    }
+
+    #[test]
+    fn leading_comment_zero_copy_no_clean_alloc() {
+        // Leading CFWS is excluded from the span by position skip, not by
+        // building a clean string — the contiguous local-part stays zero-copy.
+        let p = parse_ok_lax("(c)user.name@example.com");
+        assert!(
+            p.local_part_clean.is_none(),
+            "leading CFWS must not trigger clean-string allocation"
+        );
+        assert_eq!(p.local_part.as_str(p.input), "user.name");
+    }
+
+    #[test]
+    fn leading_unterminated_comment_rejected() {
+        // A malformed (unterminated) leading comment must still be rejected:
+        // skip_cfws restores position, parse_local_part reports the '(' .
+        let e = parse("(oops user@example.com", Strictness::Lax, false, false)
+            .expect_err("unterminated leading comment must be rejected");
+        assert_eq!(e.kind(), &ErrorKind::InvalidLocalPartChar { ch: '(' });
+    }
+
+    #[test]
+    fn leading_comment_only_then_at_is_empty_local() {
+        // A leading comment with no local-part before '@' is still an empty
+        // local-part error, not a silent accept.
+        let e = parse("(comment)@example.com", Strictness::Lax, false, false)
+            .expect_err("comment-only local-part must be rejected");
+        assert_eq!(e.kind(), &ErrorKind::EmptyLocalPart);
     }
 }
