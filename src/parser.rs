@@ -1540,4 +1540,36 @@ mod tests {
             .expect_err("bare text without '@' must fail");
         assert_eq!(e.kind(), &ErrorKind::MissingAtSign);
     }
+
+    #[test]
+    fn leading_cfws_before_quoted_display_name() {
+        // A leading space (CFWS) before a quoted display name must not divert
+        // parsing to the unquoted scanner — the display name must be the
+        // unquoted "John Doe", not the raw `"John Doe"` with quotes.
+        let p = parse(
+            " \"John Doe\" <user@example.com>",
+            Strictness::Standard,
+            true,
+            false,
+        )
+        .unwrap_or_else(|e| panic!("leading CFWS + quoted display name: {e}"));
+        assert_eq!(p.display_name.map(|s| s.as_str(p.input)), Some("John Doe"));
+        assert_eq!(p.local_part.as_str(p.input), "user");
+    }
+
+    #[test]
+    fn ipv6_address_literal_tag_is_case_insensitive() {
+        // RFC ABNF string literals are case-insensitive, so the `IPv6:` tag may
+        // be written in any case.
+        for input in [
+            "user@[ipv6:::1]",
+            "user@[IPV6:2001:db8::1]",
+            "user@[IPv6:::1]",
+        ] {
+            assert!(
+                parse(input, Strictness::Lax, false, true).is_ok(),
+                "case-insensitive IPv6 tag must parse: {input}"
+            );
+        }
+    }
 }
