@@ -42,6 +42,9 @@ pub enum ErrorKind {
     UnterminatedComment,
     /// Unterminated domain literal `[...]`.
     UnterminatedDomainLiteral,
+    /// Domain literal `[...]` is not a valid IPv4 or `IPv6:` address literal
+    /// (RFC 5321 §4.1.3). General domain literals are not accepted.
+    InvalidAddressLiteral,
     /// IDNA encoding failed for domain.
     IdnaError(String),
     /// Domain not in Public Suffix List (when PSL validation enabled).
@@ -97,6 +100,12 @@ impl fmt::Display for Error {
             ErrorKind::InvalidQuotedPair => write!(f, "invalid quoted-pair escape"),
             ErrorKind::UnterminatedComment => write!(f, "unterminated comment"),
             ErrorKind::UnterminatedDomainLiteral => write!(f, "unterminated domain literal"),
+            ErrorKind::InvalidAddressLiteral => {
+                write!(
+                    f,
+                    "domain literal is not a valid IPv4 or IPv6 address literal"
+                )
+            }
             ErrorKind::IdnaError(msg) => write!(f, "IDNA encoding failed: {msg}"),
             ErrorKind::UnknownTld(tld) => write!(f, "unknown TLD: .{tld}"),
             ErrorKind::Unexpected { ch } => {
@@ -111,3 +120,44 @@ impl fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_and_accessors_cover_all_kinds() {
+        // Every ErrorKind must render a non-empty message, and the accessors
+        // must round-trip the kind and position.
+        let kinds = [
+            ErrorKind::Empty,
+            ErrorKind::MissingAtSign,
+            ErrorKind::EmptyLocalPart,
+            ErrorKind::EmptyDomain,
+            ErrorKind::LocalPartTooLong { len: 65 },
+            ErrorKind::AddressTooLong { len: 300 },
+            ErrorKind::DomainLabelTooLong {
+                label: "x".to_string(),
+                len: 64,
+            },
+            ErrorKind::InvalidLocalPartChar { ch: '(' },
+            ErrorKind::InvalidDomainChar { ch: '[' },
+            ErrorKind::DomainLabelHyphen,
+            ErrorKind::DomainNoDot,
+            ErrorKind::UnterminatedQuotedString,
+            ErrorKind::InvalidQuotedPair,
+            ErrorKind::UnterminatedComment,
+            ErrorKind::UnterminatedDomainLiteral,
+            ErrorKind::InvalidAddressLiteral,
+            ErrorKind::IdnaError("boom".to_string()),
+            ErrorKind::UnknownTld("zzz".to_string()),
+            ErrorKind::Unexpected { ch: '!' },
+        ];
+        for (pos, kind) in kinds.into_iter().enumerate() {
+            let err = Error::new(kind.clone(), pos);
+            assert!(!err.to_string().is_empty(), "empty Display for {kind:?}");
+            assert_eq!(err.kind(), &kind);
+            assert_eq!(err.position(), pos);
+        }
+    }
+}

@@ -148,6 +148,16 @@ assert_eq!(
 );
 ```
 
+## Conformance
+
+Validated against the [isEmail](https://github.com/dominicsayers/isemail) test
+suite (v3.05, 164 edge cases), the same corpus used by `email-address-parser`.
+All 164 cases pass: valid addresses (RFC 5321/5322 quoted strings, IPv4/IPv6
+address literals, comments, folding whitespace, obsolete forms) are accepted at
+the appropriate strictness level, while malformed inputs (bad IP literals,
+over-length parts, bare control characters) are rejected. See
+[`tests/conformance.rs`](tests/conformance.rs).
+
 ## Support the Project
 
 <div align="center">
