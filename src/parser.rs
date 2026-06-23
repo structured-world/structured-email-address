@@ -149,6 +149,14 @@ pub(crate) fn parse(
     let mut parser = Parser::new(input);
     let allow_obs = matches!(strictness, Strictness::Lax);
 
+    // Strip leading CFWS before choosing the display-name / angle-addr path
+    // (RFC 5322: a mailbox may be preceded by CFWS). Without this, a leading
+    // space would divert a quoted display name to the unquoted scanner. Strict
+    // (RFC 5321) forbids CFWS, so leading whitespace is left to be rejected.
+    if !matches!(strictness, Strictness::Strict) {
+        skip_cfws(&mut parser, 0);
+    }
+
     // Try name-addr format: display-name? "<" addr-spec ">"
     let display_name = if allow_display_name {
         try_parse_display_name(&mut parser, allow_obs)
@@ -625,8 +633,13 @@ fn parse_domain_literal(parser: &mut Parser<'_>) -> Result<(), Error> {
 /// (RFC 5321 §4.1.3). Uses `core::net` parsers (no-std friendly).
 fn is_address_literal(content: &str) -> bool {
     use core::net::{Ipv4Addr, Ipv6Addr};
-    if let Some(v6) = content.strip_prefix("IPv6:") {
-        return v6.parse::<Ipv6Addr>().is_ok();
+    // The "IPv6:" tag is an ABNF string literal, hence case-insensitive
+    // (RFC 5234 §2.3): `[ipv6:::1]` and `[IPV6:...]` are equally valid.
+    if content
+        .get(..5)
+        .is_some_and(|tag| tag.eq_ignore_ascii_case("IPv6:"))
+    {
+        return content[5..].parse::<Ipv6Addr>().is_ok();
     }
     content.parse::<Ipv4Addr>().is_ok()
 }
