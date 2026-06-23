@@ -94,7 +94,8 @@ fn isemail_conformance() {
         .allow_single_label_domain()
         .build();
 
-    let doc = roxmltree::Document::parse(SUITE).expect("isemail_tests.xml must parse");
+    let doc = roxmltree::Document::parse(SUITE)
+        .unwrap_or_else(|e| panic!("isemail_tests.xml must parse: {e}"));
 
     // (pass, total) per category.
     let mut per_cat: BTreeMap<&str, (u32, u32)> = BTreeMap::new();
@@ -103,9 +104,9 @@ fn isemail_conformance() {
     for node in doc.descendants().filter(|n| n.has_tag_name("test")) {
         let id: u32 = node
             .attribute("id")
-            .expect("test must have id")
+            .unwrap_or_else(|| panic!("test must have id"))
             .parse()
-            .expect("id must be numeric");
+            .unwrap_or_else(|e| panic!("id must be numeric: {e}"));
         let address = decode_controls(child_text(&node, "address"));
         let category = child_text(&node, "category");
         assert!(!category.is_empty(), "#{id} missing category");
