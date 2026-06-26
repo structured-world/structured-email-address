@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6](https://github.com/structured-world/structured-email-address/compare/v0.0.5...v0.0.6) - 2026-06-23
+
+### Fixed
+
+- *(parser)* harden RFC 5321/5322 conformance (CFWS, CR/LF, IP literals) ([#45](https://github.com/structured-world/structured-email-address/pull/45))
+
 ## [0.0.4](https://github.com/structured-world/structured-email-address/compare/v0.0.3...v0.0.4) - 2026-04-04
 
 ### Fixed
