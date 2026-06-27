@@ -179,4 +179,26 @@ mod tests {
         let result = crate::EmailAddress::parse_with("user@[192.168.1.1]", &config);
         assert!(result.is_ok());
     }
+
+    // ── PSL validation (structured-public-domains backend) ──
+
+    #[cfg(feature = "psl")]
+    #[test]
+    fn psl_accepts_known_suffix() {
+        // A domain whose public suffix is in the PSL passes domain_check_psl.
+        let config = crate::Config::builder().domain_check_psl().build();
+        let result = crate::EmailAddress::parse_with("user@example.com", &config);
+        assert!(result.is_ok(), "known suffix must pass: {result:?}");
+    }
+
+    #[cfg(feature = "psl")]
+    #[test]
+    fn psl_rejects_unknown_suffix() {
+        // A made-up TLD matches only the PSL `*` default rule (is_known == false),
+        // so PSL validation rejects it with UnknownTld.
+        let config = crate::Config::builder().domain_check_psl().build();
+        let err = crate::EmailAddress::parse_with("user@example.invalidtldxyz", &config)
+            .expect_err("unknown suffix must be rejected");
+        assert!(matches!(err.kind(), crate::ErrorKind::UnknownTld(_)));
+    }
 }
