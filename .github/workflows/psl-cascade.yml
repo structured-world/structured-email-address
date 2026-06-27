@@ -45,6 +45,11 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0  # full history + tags needed to branch off the last release
+          # Do not persist the write-capable app token in .git/config: the job
+          # runs cargo (build scripts / proc-macros from dependencies) before any
+          # push, and a malicious one could read a persisted credential. Auth is
+          # re-attached to origin only inside the push steps, after cargo runs.
+          persist-credentials: false
 
       - name: Resolve version and baseline tag
         id: resolve
@@ -203,6 +208,11 @@ jobs:
           git add -A
           git commit -m "feat(data): bump PSL data to structured-public-domains v${VERSION}"
 
+          # Attach the token to origin now (checkout used persist-credentials:
+          # false), after the untrusted cargo steps have already run.
+          git remote set-url origin \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
           # Push the TAG first: if a later step fails, the resync path (mode=sync)
           # recovers from "tag exists but not on main". The branch push uses
           # --force-with-lease so a rerun is idempotent even if a prior run left
@@ -225,6 +235,10 @@ jobs:
         run: |
           set -euo pipefail
           BRANCH="chore/psl-cascade-${VERSION}"
+
+          # Re-attach the token to origin (checkout used persist-credentials: false).
+          git remote set-url origin \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
           # Resync path: the release tag exists but never reached main (a prior
           # run failed after tagging). Recreate the branch at the released tag so
