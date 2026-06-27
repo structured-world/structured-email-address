@@ -15,12 +15,12 @@ categories = ["parser-implementations", "text-processing"]
 [features]
 default = ["serde", "psl"]
 serde = ["dep:serde"]
-psl = ["dep:psl"]
+psl = ["dep:structured-public-domains"]
 rayon = ["dep:rayon"]
 
 [dependencies]
 idna = "1.1"
-psl = { version = "2", optional = true }
+structured-public-domains = { version = "0.0.8", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 unicode-normalization = "0.1"
 unicode-security = "0.1"

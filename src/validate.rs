@@ -94,12 +94,11 @@ fn validate_tld(domain: &str, pos: usize) -> Result<(), Error> {
 /// PSL-based domain validation (requires `psl` feature).
 #[cfg(feature = "psl")]
 fn validate_psl(domain: &str, pos: usize) -> Result<(), Error> {
-    match psl::suffix(domain.as_bytes()) {
-        Some(suffix) if suffix.is_known() => Ok(()),
-        _ => {
-            let tld = domain.rsplit('.').next().unwrap_or(domain);
-            Err(Error::new(ErrorKind::UnknownTld(tld.to_string()), pos))
-        }
+    if structured_public_domains::is_known_suffix(domain) {
+        Ok(())
+    } else {
+        let tld = domain.rsplit('.').next().unwrap_or(domain);
+        Err(Error::new(ErrorKind::UnknownTld(tld.to_string()), pos))
     }
 }
 
