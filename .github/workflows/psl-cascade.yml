@@ -111,13 +111,26 @@ jobs:
           else
             on_main=false
           fi
-          if [ "$DEP_AT_TAG" != "$VERSION" ]; then
-            # New dependency version → cut a fresh data release, then sync it.
+          # Compare versions numerically (both already validated as x.y.z). Only a
+          # strictly-newer dependency cuts a release — a stale/out-of-order dispatch
+          # carrying an OLDER version must not downgrade the dependency.
+          newer=$(python3 - "$DEP_AT_TAG" "$VERSION" <<'PY'
+          import sys
+          cur = tuple(map(int, sys.argv[1].split(".")))
+          req = tuple(map(int, sys.argv[2].split(".")))
+          print("yes" if req > cur else ("equal" if req == cur else "older"))
+          PY
+          )
+          if [ "$newer" = "older" ]; then
+            echo "Requested structured-public-domains v$VERSION is older than baseline v$DEP_AT_TAG; refusing to downgrade." >&2
+            exit 1
+          elif [ "$newer" = "yes" ]; then
+            # Strictly newer dependency → cut a fresh data release, then sync it.
             mode=release
           elif [ "$on_main" = "false" ]; then
-            # This dep version was already released, but its tag never reached
-            # main — a prior run failed between tagging and the main sync.
-            # Re-sync the existing tag without cutting another release.
+            # Same dep version already released, but its tag never reached main —
+            # a prior run failed between tagging and the main sync. Re-sync the
+            # existing tag without cutting another release.
             mode=sync
           else
             mode=noop
