@@ -48,14 +48,22 @@ jobs:
 
       - name: Resolve version and baseline tag
         id: resolve
+        env:
+          # Untrusted input (repository_dispatch payload / manual input): pass via
+          # env, never interpolate into the shell, and validate before any use.
+          VERSION_INPUT: ${{ github.event.client_payload.version || inputs.version }}
         run: |
           set -euo pipefail
-          # New dependency version: from the dispatch payload, or the manual input.
-          VERSION="${{ github.event.client_payload.version || inputs.version }}"
+          VERSION="$VERSION_INPUT"
           if [ -z "$VERSION" ]; then
             echo "No structured-public-domains version provided." >&2
             exit 1
           fi
+          # Accept only a bare semver (x.y.z); reject anything that could inject.
+          printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+            echo "Invalid structured-public-domains version: $VERSION" >&2
+            exit 1
+          }
 
           # Highest semver tag (vX.Y.Z) is the baseline a data release is cut from.
           BASE_TAG=$(git tag --list 'v*' --sort=-version:refname | head -1)
