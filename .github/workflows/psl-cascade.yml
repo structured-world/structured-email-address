@@ -73,9 +73,11 @@ jobs:
           fi
 
           # The baseline must already carry the structured-public-domains dependency.
+          # `|| true` keeps `set -o pipefail` from aborting the step when the grep
+          # finds nothing (baseline predates the dependency) so the guard below runs.
           DEP_AT_TAG=$(git show "$BASE_TAG:Cargo.toml" \
             | grep -E '^structured-public-domains[[:space:]]*=' \
-            | grep -oE 'version = "[^"]+"' | head -1 | sed 's/.*"\(.*\)"/\1/')
+            | grep -oE 'version = "[^"]+"' | head -1 | sed 's/.*"\(.*\)"/\1/' || true)
           if [ -z "$DEP_AT_TAG" ]; then
             echo "Baseline $BASE_TAG predates the structured-public-domains dependency." >&2
             echo "Release the code migration first, then re-run this cascade." >&2
@@ -230,6 +232,12 @@ jobs:
           # already pushed by the cut step.
           if [ "$MODE" = "sync" ]; then
             git push origin --force "${BASE_TAG}:refs/heads/${BRANCH}"
+            # If the prior run failed at `gh release create`, the release object
+            # (and thus the crates.io publish) is missing — recreate it so the
+            # tag actually publishes.
+            gh release view "$BASE_TAG" >/dev/null 2>&1 || \
+              gh release create "$BASE_TAG" --title "$BASE_TAG" \
+                --notes "PSL data update: structured-public-domains v${VERSION}"
           fi
 
           # Bring the released data commit onto main via a MERGE commit (not squash
