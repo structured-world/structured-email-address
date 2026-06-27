@@ -89,24 +89,44 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Baseline $BASE_TAG depends on structured-public-domains v$DEP_AT_TAG; target v$VERSION"
 
-      - name: No-op guard
-        id: guard
+      - name: Plan release vs sync
+        id: plan
+        env:
+          BASE_TAG: ${{ steps.resolve.outputs.base_tag }}
+          DEP_AT_TAG: ${{ steps.resolve.outputs.dep_at_tag }}
+          VERSION: ${{ steps.resolve.outputs.version }}
         run: |
           set -euo pipefail
-          if [ "${{ steps.resolve.outputs.dep_at_tag }}" = "${{ steps.resolve.outputs.version }}" ]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Baseline already depends on v${{ steps.resolve.outputs.version }}; nothing to release."
+          git fetch origin main --quiet
+          # Is the baseline release tag already merged into main?
+          if git merge-base --is-ancestor "$BASE_TAG" origin/main; then
+            on_main=true
           else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+            on_main=false
           fi
+          if [ "$DEP_AT_TAG" != "$VERSION" ]; then
+            # New dependency version → cut a fresh data release, then sync it.
+            mode=release
+          elif [ "$on_main" = "false" ]; then
+            # This dep version was already released, but its tag never reached
+            # main — a prior run failed between tagging and the main sync.
+            # Re-sync the existing tag without cutting another release.
+            mode=sync
+          else
+            mode=noop
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "Mode: $mode (base=$BASE_TAG on_main=$on_main dep@tag=$DEP_AT_TAG target=$VERSION)"
 
       - uses: dtolnay/rust-toolchain@stable
-        if: steps.guard.outputs.changed == 'true'
+        if: steps.plan.outputs.mode == 'release'
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
-        if: steps.guard.outputs.changed == 'true'
+        if: steps.plan.outputs.mode == 'release'
 
       - name: Cut data release off the last tag
-        if: steps.guard.outputs.changed == 'true'
+        if: steps.plan.outputs.mode == 'release'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           BASE_TAG: ${{ steps.resolve.outputs.base_tag }}
@@ -116,9 +136,13 @@ jobs:
           git config user.name "sw-release-bot[bot]"
           git config user.email "sw-release-bot[bot]@users.noreply.github.com"
 
+          # Version-specific branch: a fixed name would collide with the remote
+          # branch left by the previous cascade and be rejected as non-fast-forward.
+          BRANCH="chore/psl-cascade-${VERSION}"
+
           # Branch from the LAST RELEASE so the data release carries no unreleased
           # code that may be sitting on main.
-          git checkout -B chore/psl-cascade "$BASE_TAG"
+          git checkout -B "$BRANCH" "$BASE_TAG"
 
           # Patch-bump our own version from the baseline; point the dependency at
           # the new structured-public-domains release.
@@ -141,7 +165,14 @@ jobs:
           PY
 
           cargo update -p structured-public-domains --precise "$VERSION"
+
+          # Run the same gates CI enforces before publishing: a data bump must
+          # not ship unless clippy and the no-default-features build also pass.
           cargo test --all-features
+          cargo test --no-default-features
+          cargo test --doc --all-features
+          cargo clippy --all-features -- -D warnings
+          cargo clippy --no-default-features -- -D warnings
 
           # Prepend a CHANGELOG entry right after the "## [Unreleased]" marker.
           TODAY=$(date -u +%Y-%m-%d)
@@ -172,7 +203,7 @@ jobs:
 
           # Push branch + tag, then create the release whose `created` event
           # triggers crates.io publishing (release.yml).
-          git push -u origin chore/psl-cascade
+          git push -u origin "$BRANCH"
           git tag "v${NEW}"
           git push origin "v${NEW}"
           gh release create "v${NEW}" --title "v${NEW}" \
@@ -181,17 +212,31 @@ jobs:
           echo "new_version=$NEW" >> "$GITHUB_ENV"
 
       - name: Sync the data release onto main
-        if: steps.guard.outputs.changed == 'true'
+        if: steps.plan.outputs.mode == 'release' || steps.plan.outputs.mode == 'sync'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          MODE: ${{ steps.plan.outputs.mode }}
+          BASE_TAG: ${{ steps.resolve.outputs.base_tag }}
           VERSION: ${{ steps.resolve.outputs.version }}
         run: |
           set -euo pipefail
+          BRANCH="chore/psl-cascade-${VERSION}"
+
+          # Resync path: the release tag exists but never reached main (a prior
+          # run failed after tagging). Recreate the branch at the released tag so
+          # the same sync PR can be opened. In 'release' mode the branch was
+          # already pushed by the cut step.
+          if [ "$MODE" = "sync" ]; then
+            git push origin --force "${BASE_TAG}:refs/heads/${BRANCH}"
+          fi
+
           # Bring the released data commit onto main via a MERGE commit (not squash
-          # or cherry-pick): the merge keeps the tagged commit as an ancestor of
-          # main, so release-plz recognises the data version as released and the
-          # next code release's changelog lists only the code — not the data again.
-          gh pr create --base main --head chore/psl-cascade \
+          # or cherry-pick): the merge keeps the tagged commit an ancestor of main,
+          # so release-plz recognises the data version as released and the next
+          # code release's changelog lists only the code — not the data again.
+          # Tolerate an already-open PR from a prior partial run.
+          gh pr create --base main --head "$BRANCH" \
             --title "feat(data): bump PSL data to structured-public-domains v${VERSION}" \
-            --body "Sync of released data v${new_version} onto main."
-          gh pr merge --auto --merge chore/psl-cascade
+            --body "Sync of released PSL data (structured-public-domains v${VERSION}) onto main." \
+            || true
+          gh pr merge --auto --merge "$BRANCH"
