@@ -1,0 +1,189 @@
+name: PSL Cascade
+
+# Receives a PSL data update from structured-public-domains and releases it here
+# as a DATA-ONLY patch, mirroring that crate's own off-tag release behaviour.
+#
+# A data release is cut from the LAST RELEASE TAG, not from main's HEAD, so it
+# can never sweep in unreleased code sitting on main. It contains only the
+# structured-public-domains dependency bump. The data commit is then synced onto
+# main via a MERGE commit; release-plz re-computes the pending code release to
+# stack on top of the new data release (data and code stay on separate version
+# steps).
+#
+# Bootstrap: the baseline tag must already depend on structured-public-domains.
+# Until the code release that introduces that dependency is tagged, this workflow
+# refuses to run (the dependency is absent at the tag — see the guard below).
+#
+# No cancel-in-progress — a run that already tagged/pushed must not be killed.
+concurrency:
+  group: psl-cascade
+
+on:
+  repository_dispatch:
+    types: [psl-updated]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "structured-public-domains version"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  cascade:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate token (SW Release Bot)
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.RELEASER_APP_ID }}
+          private-key: ${{ secrets.RELEASER_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0  # full history + tags needed to branch off the last release
+
+      - name: Resolve version and baseline tag
+        id: resolve
+        run: |
+          set -euo pipefail
+          # New dependency version: from the dispatch payload, or the manual input.
+          VERSION="${{ github.event.client_payload.version || inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            echo "No structured-public-domains version provided." >&2
+            exit 1
+          fi
+
+          # Highest semver tag (vX.Y.Z) is the baseline a data release is cut from.
+          BASE_TAG=$(git tag --list 'v*' --sort=-version:refname | head -1)
+          if [ -z "$BASE_TAG" ]; then
+            echo "No release tag found; cannot cut a data release." >&2
+            exit 1
+          fi
+
+          # The baseline must already carry the structured-public-domains dependency.
+          DEP_AT_TAG=$(git show "$BASE_TAG:Cargo.toml" \
+            | grep -E '^structured-public-domains[[:space:]]*=' \
+            | grep -oE 'version = "[^"]+"' | head -1 | sed 's/.*"\(.*\)"/\1/')
+          if [ -z "$DEP_AT_TAG" ]; then
+            echo "Baseline $BASE_TAG predates the structured-public-domains dependency." >&2
+            echo "Release the code migration first, then re-run this cascade." >&2
+            exit 1
+          fi
+
+          {
+            echo "version=$VERSION"
+            echo "base_tag=$BASE_TAG"
+            echo "dep_at_tag=$DEP_AT_TAG"
+          } >> "$GITHUB_OUTPUT"
+          echo "Baseline $BASE_TAG depends on structured-public-domains v$DEP_AT_TAG; target v$VERSION"
+
+      - name: No-op guard
+        id: guard
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.resolve.outputs.dep_at_tag }}" = "${{ steps.resolve.outputs.version }}" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Baseline already depends on v${{ steps.resolve.outputs.version }}; nothing to release."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.guard.outputs.changed == 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.guard.outputs.changed == 'true'
+
+      - name: Cut data release off the last tag
+        if: steps.guard.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BASE_TAG: ${{ steps.resolve.outputs.base_tag }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "sw-release-bot[bot]"
+          git config user.email "sw-release-bot[bot]@users.noreply.github.com"
+
+          # Branch from the LAST RELEASE so the data release carries no unreleased
+          # code that may be sitting on main.
+          git checkout -B chore/psl-cascade "$BASE_TAG"
+
+          # Patch-bump our own version from the baseline; point the dependency at
+          # the new structured-public-domains release.
+          BASE_VER=$(grep -m1 '^version = ' Cargo.toml | sed 's/.*"\(.*\)"/\1/')
+          NEW="$(echo "$BASE_VER" | cut -d. -f1).$(echo "$BASE_VER" | cut -d. -f2).$(( $(echo "$BASE_VER" | cut -d. -f3) + 1 ))"
+          python3 - "$VERSION" "$NEW" <<'PY'
+          import re, sys, pathlib
+          dep_ver, own_ver = sys.argv[1], sys.argv[2]
+          p = pathlib.Path("Cargo.toml")
+          t = p.read_text(encoding="utf-8")
+          # Bump the [package] version (first top-level `version = "..."`).
+          t, n = re.subn(r'(?m)^version = "[^"]+"', f'version = "{own_ver}"', t, count=1)
+          assert n == 1, "package version line not found"
+          # Bump the structured-public-domains dependency version in place.
+          t, n = re.subn(
+              r'(structured-public-domains\s*=\s*\{[^}]*?version\s*=\s*")[^"]+(")',
+              rf'\g<1>{dep_ver}\g<2>', t, count=1)
+          assert n == 1, "structured-public-domains dependency line not found"
+          p.write_text(t, encoding="utf-8")
+          PY
+
+          cargo update -p structured-public-domains --precise "$VERSION"
+          cargo test --all-features
+
+          # Prepend a CHANGELOG entry right after the "## [Unreleased]" marker.
+          TODAY=$(date -u +%Y-%m-%d)
+          {
+            echo "## [${NEW}](https://github.com/${GITHUB_REPOSITORY}/compare/${BASE_TAG}...v${NEW}) - ${TODAY}"
+            echo ""
+            echo "### Data"
+            echo ""
+            echo "PSL data: bump structured-public-domains to v${VERSION}."
+          } > /tmp/changelog-entry.md
+          python3 - "$NEW" <<'PY'
+          import sys, pathlib
+          new = sys.argv[1]
+          cl = pathlib.Path("CHANGELOG.md")
+          text = cl.read_text(encoding="utf-8")
+          entry = pathlib.Path("/tmp/changelog-entry.md").read_text(encoding="utf-8")
+          marker = "## [Unreleased]"
+          idx = text.find(marker)
+          if idx == -1:
+              cl.write_text(entry + "\n" + text, encoding="utf-8")
+          else:
+              end = text.find("\n", idx) + 1
+              cl.write_text(text[:end] + "\n" + entry + text[end:], encoding="utf-8")
+          PY
+
+          git add -A
+          git commit -m "feat(data): bump PSL data to structured-public-domains v${VERSION}"
+
+          # Push branch + tag, then create the release whose `created` event
+          # triggers crates.io publishing (release.yml).
+          git push -u origin chore/psl-cascade
+          git tag "v${NEW}"
+          git push origin "v${NEW}"
+          gh release create "v${NEW}" --title "v${NEW}" \
+            --notes "PSL data update: structured-public-domains v${VERSION}"
+
+          echo "new_version=$NEW" >> "$GITHUB_ENV"
+
+      - name: Sync the data release onto main
+        if: steps.guard.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Bring the released data commit onto main via a MERGE commit (not squash
+          # or cherry-pick): the merge keeps the tagged commit as an ancestor of
+          # main, so release-plz recognises the data version as released and the
+          # next code release's changelog lists only the code — not the data again.
+          gh pr create --base main --head chore/psl-cascade \
+            --title "feat(data): bump PSL data to structured-public-domains v${VERSION}" \
+            --body "Sync of released data v${new_version} onto main."
+          gh pr merge --auto --merge chore/psl-cascade
