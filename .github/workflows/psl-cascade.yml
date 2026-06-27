@@ -201,11 +201,13 @@ jobs:
           git add -A
           git commit -m "feat(data): bump PSL data to structured-public-domains v${VERSION}"
 
-          # Push branch + tag, then create the release whose `created` event
-          # triggers crates.io publishing (release.yml).
-          git push -u origin "$BRANCH"
+          # Push the TAG first: if a later step fails, the resync path (mode=sync)
+          # recovers from "tag exists but not on main". The branch push uses
+          # --force-with-lease so a rerun is idempotent even if a prior run left
+          # the remote branch behind (avoids a permanent non-fast-forward block).
           git tag "v${NEW}"
           git push origin "v${NEW}"
+          git push --force-with-lease -u origin "$BRANCH"
           gh release create "v${NEW}" --title "v${NEW}" \
             --notes "PSL data update: structured-public-domains v${VERSION}"
 
