@@ -197,10 +197,12 @@ mod tests {
         // A made-up TLD matches only the PSL `*` default rule (is_known == false),
         // so PSL validation rejects it with UnknownTld.
         let config = crate::Config::builder().domain_check_psl().build();
-        let err = match crate::EmailAddress::parse_with("user@example.invalidtldxyz", &config) {
-            Err(err) => err,
-            Ok(value) => panic!("unknown suffix must be rejected, got {value:?}"),
-        };
-        assert!(matches!(err.kind(), crate::ErrorKind::UnknownTld(_)));
+        // Single matches! over the Result keeps the test free of unwrap/expect
+        // and avoids an uncovered panic arm on the happy path.
+        let result = crate::EmailAddress::parse_with("user@example.invalidtldxyz", &config);
+        assert!(matches!(
+            result.as_ref().map_err(|e| e.kind()),
+            Err(crate::ErrorKind::UnknownTld(_))
+        ));
     }
 }
