@@ -71,9 +71,11 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normaliz
     };
 
     // Step 2: Case folding (provider rule overrides the global case policy).
+    // A quoted local-part is literal, so provider semantics never apply inside
+    // it (same as dots/subaddress below) — only a global lowercase policy does.
     let lowercase_local = match provider {
-        Some(p) => p.folds_case(),
-        None => matches!(config.case_policy, CasePolicy::All),
+        Some(p) if !is_quoted => p.folds_case(),
+        _ => matches!(config.case_policy, CasePolicy::All),
     };
     let cased_local = if lowercase_local {
         nfc_local.to_lowercase()
