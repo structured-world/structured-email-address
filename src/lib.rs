@@ -508,6 +508,24 @@ mod tests {
     }
 
     #[test]
+    fn provider_aware_quoted_local_preserves_case() {
+        // A quoted local-part is literal: the provider rule's case folding
+        // (Gmail) must NOT apply inside it, just as dots and the subaddress
+        // separator don't. Without a global lowercase policy, case is preserved.
+        let config = Config::builder().provider_aware().build();
+        let email = EmailAddress::parse_with("\"A.B\"@gmail.com", &config)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(email.local_part(), "A.B");
+
+        // A global lowercase policy is not provider-specific, so it still folds
+        // a quoted local-part.
+        let config = Config::builder().lowercase_all().build();
+        let email = EmailAddress::parse_with("\"A.B\"@gmail.com", &config)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(email.local_part(), "a.b");
+    }
+
+    #[test]
     fn provider_aware_off_does_not_strip_gmail_dots() {
         // Without provider_aware and without dots_gmail_only, gmail dots stay.
         let email: EmailAddress = "a.b.c@gmail.com".parse().unwrap_or_else(|e| panic!("{e}"));
