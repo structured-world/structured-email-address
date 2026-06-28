@@ -227,12 +227,11 @@ jobs:
             "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
           # Push the TAG first: if a later step fails, the resync path (mode=sync)
-          # recovers from "tag exists but not on main". The branch push uses
-          # --force-with-lease so a rerun is idempotent even if a prior run left
-          # the remote branch behind (avoids a permanent non-fast-forward block).
+          # recovers from "tag exists but not on main". No branch is pushed —
+          # the sync onto main is a direct push (no PR), so the only durable
+          # remote ref the cascade needs is the tag.
           git tag "v${NEW}"
           git push origin "v${NEW}"
-          git push --force-with-lease -u origin "$BRANCH"
           gh release create "v${NEW}" --title "v${NEW}" \
             --notes "PSL data update: structured-public-domains v${VERSION}"
 
@@ -247,33 +246,34 @@ jobs:
           VERSION: ${{ steps.resolve.outputs.version }}
         run: |
           set -euo pipefail
-          BRANCH="chore/psl-cascade-${VERSION}"
+          git config user.name "sw-release-bot[bot]"
+          git config user.email "sw-release-bot[bot]@users.noreply.github.com"
 
           # Re-attach the token to origin (checkout used persist-credentials: false).
           git remote set-url origin \
             "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
-          # Resync path: the release tag exists but never reached main (a prior
-          # run failed after tagging). Recreate the branch at the released tag so
-          # the same sync PR can be opened. In 'release' mode the branch was
-          # already pushed by the cut step.
           if [ "$MODE" = "sync" ]; then
-            git push origin --force "${BASE_TAG}:refs/heads/${BRANCH}"
-            # If the prior run failed at `gh release create`, the release object
-            # (and thus the crates.io publish) is missing — recreate it so the
-            # tag actually publishes.
+            # Resync: the release tag exists but never reached main (a prior run
+            # failed after tagging). The data commit is the tag itself.
+            SYNC_REF="$BASE_TAG"
+            # If the prior run also failed at `gh release create`, recreate the
+            # release so the tag actually publishes to crates.io.
             gh release view "$BASE_TAG" >/dev/null 2>&1 || \
               gh release create "$BASE_TAG" --title "$BASE_TAG" \
                 --notes "PSL data update: structured-public-domains v${VERSION}"
+          else
+            SYNC_REF="v${new_version}"
           fi
 
-          # Bring the released data commit onto main via a MERGE commit (not squash
-          # or cherry-pick): the merge keeps the tagged commit an ancestor of main,
-          # so release-plz recognises the data version as released and the next
-          # code release's changelog lists only the code — not the data again.
-          # Tolerate an already-open PR from a prior partial run.
-          gh pr create --base main --head "$BRANCH" \
-            --title "feat(data): bump PSL data to structured-public-domains v${VERSION}" \
-            --body "Sync of released PSL data (structured-public-domains v${VERSION}) onto main." \
-            || true
-          gh pr merge --auto --merge "$BRANCH"
+          # Sync onto main by a DIRECT merge + push — no PR. The SW Release Bot
+          # bypasses branch protection, so the cascade completes automatically
+          # instead of stalling on a PR waiting to be merged. A merge commit keeps
+          # the tagged commit an ancestor of main, so release-plz recomputes the
+          # pending code release on top of the new data release (unreleased code on
+          # main is never published by the cascade — the release was cut off-tag).
+          git fetch origin main
+          git checkout -B main origin/main
+          git merge --no-ff "$SYNC_REF" \
+            -m "feat(data): bump PSL data to structured-public-domains v${VERSION}"
+          git push origin main
