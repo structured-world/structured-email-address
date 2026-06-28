@@ -45,10 +45,24 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normaliz
     let nfc_local: String = unquoted_local.nfc().collect();
     let nfc_domain: String = domain_str.nfc().collect();
 
-    // Step 2: Case folding.
-    let cased_local = match config.case_policy {
-        CasePolicy::All => nfc_local.to_lowercase(),
-        CasePolicy::Domain | CasePolicy::Preserve => nfc_local,
+    // Provider-aware overrides: when enabled and the domain matches a registered
+    // provider, that rule's case / separator / dot policy governs this address
+    // instead of the global policies. Non-matching domains use the global policies.
+    let provider = if config.provider_aware {
+        config.providers.lookup(&nfc_domain)
+    } else {
+        None
+    };
+
+    // Step 2: Case folding (provider rule overrides the global case policy).
+    let lowercase_local = match provider {
+        Some(p) => p.folds_case(),
+        None => matches!(config.case_policy, CasePolicy::All),
+    };
+    let cased_local = if lowercase_local {
+        nfc_local.to_lowercase()
+    } else {
+        nfc_local
     };
 
     // Steps 3-5: Subaddress and dot normalization apply only to unquoted local-parts.
@@ -56,24 +70,47 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normaliz
     let (_base_local, tag, local_after_dots) = if is_quoted {
         (cased_local.clone(), None, cased_local)
     } else {
-        // Step 3: Extract subaddress tag.
-        let sep = config.subaddress_separator;
-        let (base, tag) = match cased_local.split_once(sep) {
-            Some((base, tag)) if !base.is_empty() => (base.to_string(), Some(tag.to_string())),
-            _ => (cased_local, None),
+        // Step 3: Extract subaddress tag. A provider with no subaddressing
+        // (separator None) disables tag extraction.
+        let sep: Option<char> = match provider {
+            Some(p) => p.separator(),
+            None => Some(config.subaddress_separator),
+        };
+        let (base, tag) = match sep {
+            Some(s) => match cased_local.split_once(s) {
+                Some((base, tag)) if !base.is_empty() => (base.to_string(), Some(tag.to_string())),
+                _ => (cased_local, None),
+            },
+            None => (cased_local, None),
         };
 
         // Step 4: Apply subaddress policy to canonical form.
         let local_after_tag = match config.subaddress {
             SubaddressPolicy::Strip => base.clone(),
-            SubaddressPolicy::Preserve => match &tag {
-                Some(t) => format!("{}{}{}", base, sep, t),
-                None => base.clone(),
+            SubaddressPolicy::Preserve => match (&tag, sep) {
+                (Some(t), Some(s)) => format!("{base}{s}{t}"),
+                _ => base.clone(),
             },
         };
 
-        // Step 5: Dot policy.
-        let after_dots = apply_dot_policy(&local_after_tag, &nfc_domain, config.dot_policy);
+        // Step 5: Dot stripping (provider rule overrides the global dot policy).
+        let strip = match provider {
+            Some(p) => p.strips_dots(),
+            None => match config.dot_policy {
+                DotPolicy::Preserve => false,
+                DotPolicy::Always => true,
+                // Strip only for a registered provider that ignores dots.
+                DotPolicy::GmailOnly => config
+                    .providers
+                    .lookup(&nfc_domain)
+                    .is_some_and(|p| p.strips_dots()),
+            },
+        };
+        let after_dots = if strip {
+            local_after_tag.replace('.', "")
+        } else {
+            local_after_tag
+        };
         (base, tag, after_dots)
     };
 
@@ -127,26 +164,6 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normaliz
         display_name,
         skeleton: skel,
     })
-}
-
-/// Apply dot-stripping policy.
-fn apply_dot_policy(local: &str, domain: &str, policy: DotPolicy) -> String {
-    match policy {
-        DotPolicy::Preserve => local.to_string(),
-        DotPolicy::Always => local.replace('.', ""),
-        DotPolicy::GmailOnly => {
-            if is_gmail_domain(domain) {
-                local.replace('.', "")
-            } else {
-                local.to_string()
-            }
-        }
-    }
-}
-
-/// Check if domain is a Gmail domain (case-insensitive, allocation-free).
-fn is_gmail_domain(domain: &str) -> bool {
-    domain.eq_ignore_ascii_case("gmail.com") || domain.eq_ignore_ascii_case("googlemail.com")
 }
 
 /// Remove RFC 5322 quoted-pair backslashes (`\"` → `"`, `\\` → `\`)

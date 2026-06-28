@@ -64,6 +64,41 @@ assert_eq!(email.tag(), Some("promo"));
 assert!(email.is_freemail());
 ```
 
+## Provider-Aware Normalization
+
+Each known provider carries its own rule (dot handling, case folding, subaddress
+separator, freemail flag). Enable `provider_aware()` to normalize a matched
+address by its provider's rule instead of the global policies, and register your
+own providers:
+
+```rust
+use structured_email_address::{Config, EmailAddress, ProviderRule};
+
+let config = Config::builder()
+    .provider_aware()            // matched provider's rule governs the address
+    .strip_subaddress()
+    .add_provider(               // extend the built-in registry
+        ProviderRule::new(["mail.corp.example"])
+            .strip_dots(true)
+            .lowercase_local(true)
+            .subaddress_separator(Some('-')),
+    )
+    .build();
+
+// Gmail's built-in rule strips dots + folds case even with no global policy set:
+let g = EmailAddress::parse_with("A.Li.Ce+promo@Gmail.com", &config)?;
+assert_eq!(g.canonical(), "alice@gmail.com");
+
+// Custom provider with a '-' separator:
+let c = EmailAddress::parse_with("John.Doe-tag@mail.corp.example", &config)?;
+assert_eq!(c.local_part(), "johndoe");
+assert_eq!(c.tag(), Some("tag"));
+```
+
+Built-in providers: Gmail/Googlemail (dot-stripping), Outlook, Yahoo, ProtonMail,
+iCloud, Yandex, Mail.ru, and other common freemail domains. `is_freemail()`
+consults the same registry regardless of `provider_aware`.
+
 ## Display Names
 
 ```rust
