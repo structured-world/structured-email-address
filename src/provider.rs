@@ -38,10 +38,15 @@ pub struct ProviderRule {
 }
 
 impl ProviderRule {
-    /// Create a rule for the given domains (matched case-insensitively).
+    /// Create a rule for the given domains.
+    ///
+    /// Domains are stored in their IDNA-ASCII (punycode) canonical form so a
+    /// rule registered as `münchen.de` and one as `xn--mnchen-3ya.de` are
+    /// equivalent, and matching agrees with the canonical domain used elsewhere.
     ///
     /// Defaults: no dot stripping, no case folding, `+` subaddress separator,
-    /// and `is_freemail = true` (most registered providers are freemail).
+    /// and `is_freemail = false` (a custom rule is treated as a private domain
+    /// unless you opt in with [`freemail(true)`](Self::freemail)).
     pub fn new<I, S>(domains: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -50,12 +55,12 @@ impl ProviderRule {
         Self {
             domains: domains
                 .into_iter()
-                .map(|d| d.into().to_ascii_lowercase().into_boxed_str())
+                .map(|d| canonical_domain(&d.into()))
                 .collect(),
             strip_dots: false,
             lowercase_local: false,
             subaddress_sep: Some('+'),
-            is_freemail: true,
+            is_freemail: false,
         }
     }
 
@@ -88,9 +93,17 @@ impl ProviderRule {
         self
     }
 
-    /// Returns true if `domain` (compared case-insensitively) belongs to this provider.
+    /// Returns true if `domain` belongs to this provider.
+    ///
+    /// The domain is canonicalized to IDNA-ASCII before comparison, so Unicode
+    /// and punycode spellings of the same domain match.
     pub fn matches(&self, domain: &str) -> bool {
-        self.domains.iter().any(|d| domain.eq_ignore_ascii_case(d))
+        self.matches_canonical(&canonical_domain(domain))
+    }
+
+    /// Match against a domain already in canonical (IDNA-ASCII) form.
+    fn matches_canonical(&self, canonical: &str) -> bool {
+        self.domains.iter().any(|d| &**d == canonical)
     }
 
     /// Whether the local part's dots are insignificant.
@@ -135,7 +148,11 @@ impl ProviderRegistry {
     /// Only Gmail/Googlemail ignore dots; every entry folds local-part case and
     /// uses `+` as its subaddress separator. All built-ins are freemail.
     pub fn builtin() -> Self {
-        let p = |domains: &[&str]| ProviderRule::new(domains.iter().copied()).lowercase_local(true);
+        let p = |domains: &[&str]| {
+            ProviderRule::new(domains.iter().copied())
+                .lowercase_local(true)
+                .freemail(true)
+        };
         Self {
             rules: vec![
                 p(&["gmail.com", "googlemail.com"]).strip_dots(true),
@@ -176,9 +193,14 @@ impl ProviderRegistry {
     /// Look up the rule for a domain, or `None` if no provider matches.
     ///
     /// Most-recently-added rules win, so a custom rule overrides a built-in for
-    /// the same domain.
+    /// the same domain. The domain is canonicalized to IDNA-ASCII once, so
+    /// Unicode and punycode spellings resolve to the same rule.
     pub fn lookup(&self, domain: &str) -> Option<&ProviderRule> {
-        self.rules.iter().rev().find(|r| r.matches(domain))
+        let canonical = canonical_domain(domain);
+        self.rules
+            .iter()
+            .rev()
+            .find(|r| r.matches_canonical(&canonical))
     }
 }
 
@@ -186,6 +208,16 @@ impl Default for ProviderRegistry {
     fn default() -> Self {
         Self::builtin()
     }
+}
+
+/// Canonicalize a domain to its IDNA-ASCII (punycode) form, lowercased.
+///
+/// Falls back to ASCII lowercasing if the input is not a valid domain, so
+/// matching never panics on arbitrary registry input.
+fn canonical_domain(domain: &str) -> Box<str> {
+    idna::domain_to_ascii(domain)
+        .unwrap_or_else(|_| domain.to_ascii_lowercase())
+        .into_boxed_str()
 }
 
 #[cfg(test)]

@@ -45,11 +45,27 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normaliz
     let nfc_local: String = unquoted_local.nfc().collect();
     let nfc_domain: String = domain_str.nfc().collect();
 
+    // Canonical (IDNA-ASCII) domain — computed up front so provider lookup,
+    // freemail detection (in parse_with), and the final domain all use the SAME
+    // form. Domain literals ([192.168.1.1]) are IPs, not hostnames — skip IDNA.
+    // Strict mode: STD3 ASCII deny-list, hyphen checks, DNS length verification.
+    let canonical_domain = if nfc_domain.starts_with('[') {
+        nfc_domain.to_lowercase()
+    } else {
+        idna::domain_to_ascii_strict(&nfc_domain).map_err(|e| {
+            Error::new(
+                ErrorKind::IdnaError(format!("{}: {}", nfc_domain, e)),
+                parsed.domain.start,
+            )
+        })?
+    };
+
     // Provider-aware overrides: when enabled and the domain matches a registered
     // provider, that rule's case / separator / dot policy governs this address
     // instead of the global policies. Non-matching domains use the global policies.
+    // Lookup uses the canonical domain so IDN rules match consistently.
     let provider = if config.provider_aware {
-        config.providers.lookup(&nfc_domain)
+        config.providers.lookup(&canonical_domain)
     } else {
         None
     };
@@ -102,7 +118,7 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normaliz
                 // Strip only for a registered provider that ignores dots.
                 DotPolicy::GmailOnly => config
                     .providers
-                    .lookup(&nfc_domain)
+                    .lookup(&canonical_domain)
                     .is_some_and(|p| p.strips_dots()),
             },
         };
@@ -114,21 +130,7 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normaliz
         (base, tag, after_dots)
     };
 
-    // Step 6: Domain — IDNA encoding (punycode for international domains).
-    // Domain literals (e.g., [192.168.1.1]) are IP addresses, not hostnames — skip IDNA.
-    // Use strict mode: STD3 ASCII deny-list, hyphen checks, DNS length verification.
-    let canonical_domain = if nfc_domain.starts_with('[') {
-        nfc_domain.to_lowercase()
-    } else {
-        idna::domain_to_ascii_strict(&nfc_domain).map_err(|e| {
-            Error::new(
-                ErrorKind::IdnaError(format!("{}: {}", nfc_domain, e)),
-                parsed.domain.start,
-            )
-        })?
-    };
-
-    // Step 7: IDNA roundtrip — recover Unicode domain when punycode is present.
+    // Step 6: IDNA roundtrip — recover Unicode domain when punycode is present.
     let domain_unicode = if canonical_domain
         .split('.')
         .any(|label| label.starts_with("xn--"))

@@ -534,6 +534,32 @@ mod tests {
         assert_eq!(email.tag(), Some("tag"));
     }
 
+    #[test]
+    fn idn_provider_rule_consistent_across_normalization_and_freemail() {
+        use crate::ProviderRule;
+        // A provider rule registered with the Unicode domain must apply to the
+        // IDNA-encoded address for BOTH provider-aware normalization and
+        // is_freemail() — the canonical domain is used at both call sites.
+        let config = Config::builder()
+            .provider_aware()
+            .add_provider(
+                ProviderRule::new(["münchen.de"])
+                    .strip_dots(true)
+                    .lowercase_local(true)
+                    .freemail(true),
+            )
+            .build();
+        let email =
+            EmailAddress::parse_with("A.B@münchen.de", &config).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(email.domain(), "xn--mnchen-3ya.de");
+        assert_eq!(
+            email.local_part(),
+            "ab",
+            "provider rule strips dots + folds case"
+        );
+        assert!(email.is_freemail(), "same rule drives is_freemail");
+    }
+
     // ── Configured parsing ──
 
     #[test]

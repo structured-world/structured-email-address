@@ -1,15 +1,23 @@
 use super::*;
 
+/// Helper: look up a rule, panicking with a clear message if absent (no unwrap/expect).
+fn rule<'a>(reg: &'a ProviderRegistry, domain: &str) -> &'a ProviderRule {
+    match reg.lookup(domain) {
+        Some(r) => r,
+        None => panic!("expected a provider rule for {domain}"),
+    }
+}
+
 #[test]
 fn builtin_gmail_rule() {
     let reg = ProviderRegistry::builtin();
-    let g = reg.lookup("gmail.com").expect("gmail is a known provider");
+    let g = rule(&reg, "gmail.com");
     assert!(g.strips_dots(), "gmail ignores dots");
     assert!(g.folds_case());
     assert_eq!(g.separator(), Some('+'));
     assert!(g.is_freemail());
     // Alias resolves to the same rule.
-    assert!(reg.lookup("googlemail.com").unwrap().strips_dots());
+    assert!(rule(&reg, "googlemail.com").strips_dots());
 }
 
 #[test]
@@ -29,10 +37,7 @@ fn only_gmail_strips_dots_among_builtins() {
         "icloud.com",
         "mail.ru",
     ] {
-        assert!(
-            !reg.lookup(d).unwrap().strips_dots(),
-            "{d} must not strip dots"
-        );
+        assert!(!rule(&reg, d).strips_dots(), "{d} must not strip dots");
     }
 }
 
@@ -90,7 +95,7 @@ fn user_rule_takes_precedence_over_builtin() {
             .strip_dots(false)
             .lowercase_local(true),
     );
-    assert!(!reg.lookup("gmail.com").unwrap().strips_dots());
+    assert!(!rule(&reg, "gmail.com").strips_dots());
 }
 
 #[test]
@@ -101,10 +106,31 @@ fn custom_provider_added() {
             .subaddress_separator(Some('-'))
             .freemail(false),
     );
-    let r = reg.lookup("corp.example").expect("custom provider matches");
+    let r = rule(&reg, "corp.example");
     assert!(r.strips_dots());
     assert_eq!(r.separator(), Some('-'));
     assert!(!r.is_freemail());
+}
+
+#[test]
+fn custom_rule_is_not_freemail_by_default() {
+    // A normalization-only custom rule must not be reported as freemail.
+    let reg = ProviderRegistry::builtin().with(ProviderRule::new(["mail.corp.example"]));
+    assert!(!rule(&reg, "mail.corp.example").is_freemail());
+}
+
+#[test]
+fn idn_rule_matches_unicode_and_punycode() {
+    // A rule registered in Unicode matches both spellings, and one registered in
+    // punycode matches the Unicode spelling — IDNA canonicalization is consistent.
+    let uni = ProviderRegistry::empty().with(ProviderRule::new(["münchen.de"]).freemail(true));
+    assert!(uni.lookup("münchen.de").is_some());
+    assert!(uni.lookup("xn--mnchen-3ya.de").is_some());
+
+    let puny =
+        ProviderRegistry::empty().with(ProviderRule::new(["xn--mnchen-3ya.de"]).freemail(true));
+    assert!(puny.lookup("münchen.de").is_some());
+    assert!(puny.lookup("xn--mnchen-3ya.de").is_some());
 }
 
 #[test]
