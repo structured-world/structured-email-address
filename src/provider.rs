@@ -137,6 +137,45 @@ pub struct ProviderRegistry {
     rules: Vec<ProviderRule>,
 }
 
+// Process-wide built-in registry, constructed once. `builtin()` clones it and
+// the GmailOnly dot-policy borrows it, so neither pays a per-call allocation.
+// no-std: once_cell::race::OnceBox (alloc) or a caller-injected registry.
+static BUILTIN: std::sync::LazyLock<ProviderRegistry> = std::sync::LazyLock::new(|| {
+    let p = |domains: &[&str]| {
+        ProviderRule::new(domains.iter().copied())
+            .lowercase_local(true)
+            .freemail(true)
+    };
+    ProviderRegistry {
+        rules: vec![
+            p(&["gmail.com", "googlemail.com"]).strip_dots(true),
+            p(&["outlook.com", "hotmail.com", "live.com", "msn.com"]),
+            p(&["yahoo.com", "yahoo.co.uk", "yahoo.co.jp"]),
+            p(&["protonmail.com", "proton.me"]),
+            p(&["icloud.com", "me.com", "mac.com"]),
+            p(&["yandex.ru", "yandex.com"]),
+            p(&["mail.ru"]),
+            // Freemail providers without special normalization quirks.
+            p(&[
+                "aol.com",
+                "mail.com",
+                "zoho.com",
+                "gmx.com",
+                "gmx.de",
+                "web.de",
+                "tutanota.com",
+                "tuta.io",
+                "fastmail.com",
+            ]),
+        ],
+    }
+});
+
+/// Borrow the process-wide built-in registry without allocating.
+pub(crate) fn builtin_ref() -> &'static ProviderRegistry {
+    &BUILTIN
+}
+
 impl ProviderRegistry {
     /// An empty registry.
     pub fn empty() -> Self {
@@ -147,35 +186,11 @@ impl ProviderRegistry {
     ///
     /// Only Gmail/Googlemail ignore dots; every entry folds local-part case and
     /// uses `+` as its subaddress separator. All built-ins are freemail.
+    ///
+    /// Returns an owned clone of a process-wide shared registry, so the rule set
+    /// is constructed (and its domains IDNA-canonicalized) only once.
     pub fn builtin() -> Self {
-        let p = |domains: &[&str]| {
-            ProviderRule::new(domains.iter().copied())
-                .lowercase_local(true)
-                .freemail(true)
-        };
-        Self {
-            rules: vec![
-                p(&["gmail.com", "googlemail.com"]).strip_dots(true),
-                p(&["outlook.com", "hotmail.com", "live.com", "msn.com"]),
-                p(&["yahoo.com", "yahoo.co.uk", "yahoo.co.jp"]),
-                p(&["protonmail.com", "proton.me"]),
-                p(&["icloud.com", "me.com", "mac.com"]),
-                p(&["yandex.ru", "yandex.com"]),
-                p(&["mail.ru"]),
-                // Freemail providers without special normalization quirks.
-                p(&[
-                    "aol.com",
-                    "mail.com",
-                    "zoho.com",
-                    "gmx.com",
-                    "gmx.de",
-                    "web.de",
-                    "tutanota.com",
-                    "tuta.io",
-                    "fastmail.com",
-                ]),
-            ],
-        }
+        builtin_ref().clone()
     }
 
     /// Add a rule. User-added rules take precedence over earlier ones.

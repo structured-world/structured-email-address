@@ -115,9 +115,11 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normaliz
             None => match config.dot_policy {
                 DotPolicy::Preserve => false,
                 DotPolicy::Always => true,
-                // Strip only for a registered provider that ignores dots.
-                DotPolicy::GmailOnly => config
-                    .providers
+                // Strip only for a BUILT-IN provider that ignores dots
+                // (Gmail/Googlemail). Custom providers affect normalization only
+                // under provider_aware(), so the legacy GmailOnly mode consults
+                // the built-in registry, never config.providers.
+                DotPolicy::GmailOnly => crate::provider::builtin_ref()
                     .lookup(&canonical_domain)
                     .is_some_and(|p| p.strips_dots()),
             },
