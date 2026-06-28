@@ -134,6 +134,33 @@ fn idn_rule_matches_unicode_and_punycode() {
 }
 
 #[test]
+fn idn_rule_matches_decomposed_unicode_nfc() {
+    // IDNA canonicalization applies Unicode NFC, so a rule registered with the
+    // composed form (ü = U+00FC) still matches a lookup using the decomposed
+    // form (u + combining diaeresis U+0308) — the two are the same domain.
+    let reg =
+        ProviderRegistry::empty().with(ProviderRule::new(["m\u{00fc}nchen.de"]).freemail(true));
+    assert!(
+        reg.lookup("mu\u{0308}nchen.de").is_some(),
+        "decomposed spelling matches the composed rule via NFC"
+    );
+}
+
+#[test]
+fn idn_rule_rejects_confusable_lookalike() {
+    // A visually confusable domain using Cyrillic 'а' (U+0430) instead of Latin
+    // 'a' (U+0061) is a DIFFERENT domain: it canonicalizes to a different label
+    // and must not match the Latin rule (no homoglyph collision in lookup).
+    let reg = ProviderRegistry::empty().with(ProviderRule::new(["gmail.com"]).freemail(true));
+    assert!(
+        reg.lookup("gm\u{0430}il.com").is_none(),
+        "Cyrillic lookalike must not match the Latin gmail.com rule"
+    );
+    // Sanity: the genuine Latin domain still matches.
+    assert!(reg.lookup("gmail.com").is_some());
+}
+
+#[test]
 fn rule_no_subaddressing() {
     let r = ProviderRule::new(["x.example"]).subaddress_separator(None);
     assert_eq!(r.separator(), None);
