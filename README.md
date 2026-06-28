@@ -26,7 +26,7 @@ Every Rust email crate stops at RFC validation. This one goes further:
 | Serde support | Yes | - | **Yes** |
 | Zero dependencies* | Yes | nom | `idna` + 3 |
 
-\* Dependencies: `idna`, `unicode-normalization`, `unicode-security`. Optional: `psl`, `serde`.
+\* Dependencies: `idna`, `unicode-normalization`, `unicode-security`. Optional: `structured-public-domains`, `serde`.
 
 ## Quick Start
 

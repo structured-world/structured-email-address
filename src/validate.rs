@@ -94,12 +94,11 @@ fn validate_tld(domain: &str, pos: usize) -> Result<(), Error> {
 /// PSL-based domain validation (requires `psl` feature).
 #[cfg(feature = "psl")]
 fn validate_psl(domain: &str, pos: usize) -> Result<(), Error> {
-    match psl::suffix(domain.as_bytes()) {
-        Some(suffix) if suffix.is_known() => Ok(()),
-        _ => {
-            let tld = domain.rsplit('.').next().unwrap_or(domain);
-            Err(Error::new(ErrorKind::UnknownTld(tld.to_string()), pos))
-        }
+    if structured_public_domains::is_known_suffix(domain) {
+        Ok(())
+    } else {
+        let tld = domain.rsplit('.').next().unwrap_or(domain);
+        Err(Error::new(ErrorKind::UnknownTld(tld.to_string()), pos))
     }
 }
 
@@ -179,5 +178,31 @@ mod tests {
             .build();
         let result = crate::EmailAddress::parse_with("user@[192.168.1.1]", &config);
         assert!(result.is_ok());
+    }
+
+    // ── PSL validation (structured-public-domains backend) ──
+
+    #[cfg(feature = "psl")]
+    #[test]
+    fn psl_accepts_known_suffix() {
+        // A domain whose public suffix is in the PSL passes domain_check_psl.
+        let config = crate::Config::builder().domain_check_psl().build();
+        let result = crate::EmailAddress::parse_with("user@example.com", &config);
+        assert!(result.is_ok(), "known suffix must pass: {result:?}");
+    }
+
+    #[cfg(feature = "psl")]
+    #[test]
+    fn psl_rejects_unknown_suffix() {
+        // A made-up TLD matches only the PSL `*` default rule (is_known == false),
+        // so PSL validation rejects it with UnknownTld.
+        let config = crate::Config::builder().domain_check_psl().build();
+        // Single matches! over the Result keeps the test free of unwrap/expect
+        // and avoids an uncovered panic arm on the happy path.
+        let result = crate::EmailAddress::parse_with("user@example.invalidtldxyz", &config);
+        assert!(matches!(
+            result.as_ref().map_err(|e| e.kind()),
+            Err(crate::ErrorKind::UnknownTld(_))
+        ));
     }
 }

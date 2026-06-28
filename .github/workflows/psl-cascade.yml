@@ -1,0 +1,279 @@
+name: PSL Cascade
+
+# Receives a PSL data update from structured-public-domains and releases it here
+# as a DATA-ONLY patch, mirroring that crate's own off-tag release behaviour.
+#
+# A data release is cut from the LAST RELEASE TAG, not from main's HEAD, so it
+# can never sweep in unreleased code sitting on main. It contains only the
+# structured-public-domains dependency bump. The data commit is then synced onto
+# main via a MERGE commit; release-plz re-computes the pending code release to
+# stack on top of the new data release (data and code stay on separate version
+# steps).
+#
+# Bootstrap: the baseline tag must already depend on structured-public-domains.
+# Until the code release that introduces that dependency is tagged, this workflow
+# refuses to run (the dependency is absent at the tag — see the guard below).
+#
+# No cancel-in-progress — a run that already tagged/pushed must not be killed.
+concurrency:
+  group: psl-cascade
+
+on:
+  repository_dispatch:
+    types: [psl-updated]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "structured-public-domains version"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  cascade:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate token (SW Release Bot)
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.RELEASER_APP_ID }}
+          private-key: ${{ secrets.RELEASER_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0  # full history + tags needed to branch off the last release
+          # Do not persist the write-capable app token in .git/config: the job
+          # runs cargo (build scripts / proc-macros from dependencies) before any
+          # push, and a malicious one could read a persisted credential. Auth is
+          # re-attached to origin only inside the push steps, after cargo runs.
+          persist-credentials: false
+
+      - name: Resolve version and baseline tag
+        id: resolve
+        env:
+          # Untrusted input (repository_dispatch payload / manual input): pass via
+          # env, never interpolate into the shell, and validate before any use.
+          VERSION_INPUT: ${{ github.event.client_payload.version || inputs.version }}
+        run: |
+          set -euo pipefail
+          VERSION="$VERSION_INPUT"
+          if [ -z "$VERSION" ]; then
+            echo "No structured-public-domains version provided." >&2
+            exit 1
+          fi
+          # Accept only a bare semver (x.y.z); reject anything that could inject.
+          printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+            echo "Invalid structured-public-domains version: $VERSION" >&2
+            exit 1
+          }
+
+          # Highest semver tag (vX.Y.Z) is the baseline a data release is cut from.
+          BASE_TAG=$(git tag --list 'v*' --sort=-version:refname | head -1)
+          if [ -z "$BASE_TAG" ]; then
+            echo "No release tag found; cannot cut a data release." >&2
+            exit 1
+          fi
+
+          # The baseline must already carry the structured-public-domains dependency.
+          # `|| true` keeps `set -o pipefail` from aborting the step when the grep
+          # finds nothing (baseline predates the dependency) so the guard below runs.
+          DEP_AT_TAG=$(git show "$BASE_TAG:Cargo.toml" \
+            | grep -E '^structured-public-domains[[:space:]]*=' \
+            | grep -oE 'version = "[^"]+"' | head -1 | sed 's/.*"\(.*\)"/\1/' || true)
+          if [ -z "$DEP_AT_TAG" ]; then
+            echo "Baseline $BASE_TAG predates the structured-public-domains dependency." >&2
+            echo "Release the code migration first, then re-run this cascade." >&2
+            exit 1
+          fi
+
+          {
+            echo "version=$VERSION"
+            echo "base_tag=$BASE_TAG"
+            echo "dep_at_tag=$DEP_AT_TAG"
+          } >> "$GITHUB_OUTPUT"
+          echo "Baseline $BASE_TAG depends on structured-public-domains v$DEP_AT_TAG; target v$VERSION"
+
+      - name: Plan release vs sync
+        id: plan
+        env:
+          BASE_TAG: ${{ steps.resolve.outputs.base_tag }}
+          DEP_AT_TAG: ${{ steps.resolve.outputs.dep_at_tag }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          git fetch origin main --quiet
+          # Is the baseline release tag already merged into main?
+          if git merge-base --is-ancestor "$BASE_TAG" origin/main; then
+            on_main=true
+          else
+            on_main=false
+          fi
+          # Compare versions numerically (both already validated as x.y.z). Only a
+          # strictly-newer dependency cuts a release — a stale/out-of-order dispatch
+          # carrying an OLDER version must not downgrade the dependency.
+          newer=$(python3 - "$DEP_AT_TAG" "$VERSION" <<'PY'
+          import sys
+          cur = tuple(map(int, sys.argv[1].split(".")))
+          req = tuple(map(int, sys.argv[2].split(".")))
+          print("yes" if req > cur else ("equal" if req == cur else "older"))
+          PY
+          )
+          if [ "$newer" = "older" ]; then
+            echo "Requested structured-public-domains v$VERSION is older than baseline v$DEP_AT_TAG; refusing to downgrade." >&2
+            exit 1
+          elif [ "$newer" = "yes" ]; then
+            # Strictly newer dependency → cut a fresh data release, then sync it.
+            mode=release
+          elif [ "$on_main" = "false" ]; then
+            # Same dep version already released, but its tag never reached main —
+            # a prior run failed between tagging and the main sync. Re-sync the
+            # existing tag without cutting another release.
+            mode=sync
+          else
+            mode=noop
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "Mode: $mode (base=$BASE_TAG on_main=$on_main dep@tag=$DEP_AT_TAG target=$VERSION)"
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.plan.outputs.mode == 'release'
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        if: steps.plan.outputs.mode == 'release'
+
+      - name: Cut data release off the last tag
+        if: steps.plan.outputs.mode == 'release'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BASE_TAG: ${{ steps.resolve.outputs.base_tag }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "sw-release-bot[bot]"
+          git config user.email "sw-release-bot[bot]@users.noreply.github.com"
+
+          # Version-specific branch: a fixed name would collide with the remote
+          # branch left by the previous cascade and be rejected as non-fast-forward.
+          BRANCH="chore/psl-cascade-${VERSION}"
+
+          # Branch from the LAST RELEASE so the data release carries no unreleased
+          # code that may be sitting on main.
+          git checkout -B "$BRANCH" "$BASE_TAG"
+
+          # Patch-bump our own version from the baseline; point the dependency at
+          # the new structured-public-domains release.
+          BASE_VER=$(grep -m1 '^version = ' Cargo.toml | sed 's/.*"\(.*\)"/\1/')
+          NEW="$(echo "$BASE_VER" | cut -d. -f1).$(echo "$BASE_VER" | cut -d. -f2).$(( $(echo "$BASE_VER" | cut -d. -f3) + 1 ))"
+          python3 - "$VERSION" "$NEW" <<'PY'
+          import re, sys, pathlib
+          dep_ver, own_ver = sys.argv[1], sys.argv[2]
+          p = pathlib.Path("Cargo.toml")
+          t = p.read_text(encoding="utf-8")
+          # Bump the [package] version (first top-level `version = "..."`).
+          t, n = re.subn(r'(?m)^version = "[^"]+"', f'version = "{own_ver}"', t, count=1)
+          assert n == 1, "package version line not found"
+          # Bump the structured-public-domains dependency version in place.
+          t, n = re.subn(
+              r'(structured-public-domains\s*=\s*\{[^}]*?version\s*=\s*")[^"]+(")',
+              rf'\g<1>{dep_ver}\g<2>', t, count=1)
+          assert n == 1, "structured-public-domains dependency line not found"
+          p.write_text(t, encoding="utf-8")
+          PY
+
+          cargo update -p structured-public-domains --precise "$VERSION"
+
+          # Run the same gates CI enforces before publishing: a data bump must
+          # not ship unless clippy and the no-default-features build also pass.
+          cargo test --all-features
+          cargo test --no-default-features
+          cargo test --doc --all-features
+          cargo clippy --all-features -- -D warnings
+          cargo clippy --no-default-features -- -D warnings
+
+          # Prepend a CHANGELOG entry right after the "## [Unreleased]" marker.
+          TODAY=$(date -u +%Y-%m-%d)
+          {
+            echo "## [${NEW}](https://github.com/${GITHUB_REPOSITORY}/compare/${BASE_TAG}...v${NEW}) - ${TODAY}"
+            echo ""
+            echo "### Data"
+            echo ""
+            echo "PSL data: bump structured-public-domains to v${VERSION}."
+          } > /tmp/changelog-entry.md
+          python3 - "$NEW" <<'PY'
+          import sys, pathlib
+          new = sys.argv[1]
+          cl = pathlib.Path("CHANGELOG.md")
+          text = cl.read_text(encoding="utf-8")
+          entry = pathlib.Path("/tmp/changelog-entry.md").read_text(encoding="utf-8")
+          marker = "## [Unreleased]"
+          idx = text.find(marker)
+          if idx == -1:
+              cl.write_text(entry + "\n" + text, encoding="utf-8")
+          else:
+              end = text.find("\n", idx) + 1
+              cl.write_text(text[:end] + "\n" + entry + text[end:], encoding="utf-8")
+          PY
+
+          git add -A
+          git commit -m "feat(data): bump PSL data to structured-public-domains v${VERSION}"
+
+          # Attach the token to origin now (checkout used persist-credentials:
+          # false), after the untrusted cargo steps have already run.
+          git remote set-url origin \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          # Push the TAG first: if a later step fails, the resync path (mode=sync)
+          # recovers from "tag exists but not on main". The branch push uses
+          # --force-with-lease so a rerun is idempotent even if a prior run left
+          # the remote branch behind (avoids a permanent non-fast-forward block).
+          git tag "v${NEW}"
+          git push origin "v${NEW}"
+          git push --force-with-lease -u origin "$BRANCH"
+          gh release create "v${NEW}" --title "v${NEW}" \
+            --notes "PSL data update: structured-public-domains v${VERSION}"
+
+          echo "new_version=$NEW" >> "$GITHUB_ENV"
+
+      - name: Sync the data release onto main
+        if: steps.plan.outputs.mode == 'release' || steps.plan.outputs.mode == 'sync'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          MODE: ${{ steps.plan.outputs.mode }}
+          BASE_TAG: ${{ steps.resolve.outputs.base_tag }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          BRANCH="chore/psl-cascade-${VERSION}"
+
+          # Re-attach the token to origin (checkout used persist-credentials: false).
+          git remote set-url origin \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          # Resync path: the release tag exists but never reached main (a prior
+          # run failed after tagging). Recreate the branch at the released tag so
+          # the same sync PR can be opened. In 'release' mode the branch was
+          # already pushed by the cut step.
+          if [ "$MODE" = "sync" ]; then
+            git push origin --force "${BASE_TAG}:refs/heads/${BRANCH}"
+            # If the prior run failed at `gh release create`, the release object
+            # (and thus the crates.io publish) is missing — recreate it so the
+            # tag actually publishes.
+            gh release view "$BASE_TAG" >/dev/null 2>&1 || \
+              gh release create "$BASE_TAG" --title "$BASE_TAG" \
+                --notes "PSL data update: structured-public-domains v${VERSION}"
+          fi
+
+          # Bring the released data commit onto main via a MERGE commit (not squash
+          # or cherry-pick): the merge keeps the tagged commit an ancestor of main,
+          # so release-plz recognises the data version as released and the next
+          # code release's changelog lists only the code — not the data again.
+          # Tolerate an already-open PR from a prior partial run.
+          gh pr create --base main --head "$BRANCH" \
+            --title "feat(data): bump PSL data to structured-public-domains v${VERSION}" \
+            --body "Sync of released PSL data (structured-public-domains v${VERSION}) onto main." \
+            || true
+          gh pr merge --auto --merge "$BRANCH"
