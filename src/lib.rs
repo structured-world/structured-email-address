@@ -560,6 +560,29 @@ mod tests {
         assert!(email.is_freemail(), "same rule drives is_freemail");
     }
 
+    #[test]
+    fn dots_gmail_only_ignores_custom_providers() {
+        use crate::ProviderRule;
+        // GmailOnly is a legacy mode tied to the built-in dot-stripping providers
+        // (Gmail/Googlemail). Custom providers affect normalization ONLY under
+        // provider_aware(); a custom strip_dots rule must NOT leak into GmailOnly
+        // when provider_aware is off.
+        let config = Config::builder()
+            .dots_gmail_only()
+            .add_provider(ProviderRule::new(["corp.example"]).strip_dots(true))
+            .build();
+
+        // The custom provider's strip_dots is ignored: dots are preserved.
+        let email =
+            EmailAddress::parse_with("a.b@corp.example", &config).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(email.local_part(), "a.b");
+
+        // Built-in Gmail still strips dots under GmailOnly.
+        let email =
+            EmailAddress::parse_with("a.b.c@gmail.com", &config).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(email.local_part(), "abc");
+    }
+
     // ── Configured parsing ──
 
     #[test]
