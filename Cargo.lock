@@ -586,7 +586,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "structured-email-address"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "criterion",
  "idna",
@@ -601,9 +601,9 @@ dependencies = [
 
 [[package]]
 name = "structured-public-domains"
-version = "0.0.8"
+version = "0.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca3af16a56d38889e7dbf293d98b51753fbdde61aa35d8a00b83112aeb22250a"
+checksum = "f0a097d05972df3a4683076a1dc343f9bd75dbbae61896905821e12869db2617"
 
 [[package]]
 name = "syn"
