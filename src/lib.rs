@@ -518,8 +518,9 @@ mod tests {
         assert_eq!(email.local_part(), "A.B");
 
         // A global lowercase policy is not provider-specific, so it still folds
-        // a quoted local-part.
-        let config = Config::builder().lowercase_all().build();
+        // a quoted local-part — even when a provider rule matches (the rule's
+        // own folding is skipped for quoted, but the global policy still applies).
+        let config = Config::builder().provider_aware().lowercase_all().build();
         let email = EmailAddress::parse_with("\"A.B\"@gmail.com", &config)
             .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(email.local_part(), "a.b");
