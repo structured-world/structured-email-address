@@ -42,6 +42,7 @@ mod config;
 mod error;
 mod normalize;
 mod parser;
+mod provider;
 mod validate;
 
 pub use config::{
@@ -49,6 +50,7 @@ pub use config::{
 };
 pub use error::{Error, ErrorKind};
 pub use normalize::confusable_skeleton;
+pub use provider::{ProviderRegistry, ProviderRule};
 
 /// A parsed, validated, and normalized email address.
 ///
@@ -69,6 +71,8 @@ pub struct EmailAddress {
     display_name: Option<String>,
     /// Confusable skeleton, if config enabled it.
     skeleton: Option<String>,
+    /// Whether the domain is a known freemail provider (from the registry).
+    freemail: bool,
 }
 
 impl EmailAddress {
@@ -84,6 +88,13 @@ impl EmailAddress {
         let normalized = normalize::normalize(&parsed, config)?;
         validate::validate(&parsed, &normalized, config)?;
 
+        // Freemail status comes from the provider registry (built-ins + any
+        // custom rules), independent of provider-aware normalization.
+        let freemail = config
+            .providers
+            .lookup(&normalized.domain)
+            .is_some_and(|p| p.is_freemail());
+
         Ok(Self {
             original: parsed.input.to_string(),
             local_part: normalized.local_part,
@@ -92,6 +103,7 @@ impl EmailAddress {
             domain_unicode: normalized.domain_unicode,
             display_name: normalized.display_name,
             skeleton: normalized.skeleton,
+            freemail,
         })
     }
 
@@ -179,9 +191,13 @@ impl EmailAddress {
         self.skeleton.as_deref()
     }
 
-    /// Check if the domain is a well-known freemail provider.
+    /// Check if the domain is a known freemail provider.
+    ///
+    /// Determined from the [`ProviderRegistry`] in the [`Config`] used to parse
+    /// (built-in providers plus any registered via
+    /// [`ConfigBuilder::add_provider`]).
     pub fn is_freemail(&self) -> bool {
-        is_freemail_domain(&self.domain)
+        self.freemail
     }
 
     /// Parse a batch of email addresses with the given configuration.
@@ -379,39 +395,6 @@ impl<'de> serde::Deserialize<'de> for EmailAddress {
     }
 }
 
-/// Check if a domain is a well-known freemail provider.
-fn is_freemail_domain(domain: &str) -> bool {
-    matches!(
-        domain,
-        "gmail.com"
-            | "googlemail.com"
-            | "yahoo.com"
-            | "yahoo.co.uk"
-            | "yahoo.co.jp"
-            | "outlook.com"
-            | "hotmail.com"
-            | "live.com"
-            | "msn.com"
-            | "aol.com"
-            | "protonmail.com"
-            | "proton.me"
-            | "icloud.com"
-            | "me.com"
-            | "mac.com"
-            | "mail.com"
-            | "zoho.com"
-            | "yandex.ru"
-            | "yandex.com"
-            | "mail.ru"
-            | "gmx.com"
-            | "gmx.de"
-            | "web.de"
-            | "tutanota.com"
-            | "tuta.io"
-            | "fastmail.com"
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -470,6 +453,153 @@ mod tests {
 
         let email: EmailAddress = "user@company.com".parse().unwrap_or_else(|e| panic!("{e}"));
         assert!(!email.is_freemail());
+    }
+
+    #[test]
+    fn freemail_via_custom_provider() {
+        // A registered custom provider marked freemail is reported by is_freemail().
+        use crate::ProviderRule;
+        let config = Config::builder()
+            .add_provider(ProviderRule::new(["freebie.example"]).freemail(true))
+            .build();
+        let email = EmailAddress::parse_with("user@freebie.example", &config)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!(email.is_freemail());
+    }
+
+    // ── Provider-aware normalization (#5) ──
+
+    #[test]
+    fn provider_aware_gmail_normalizes_by_rule() {
+        // provider_aware applies Gmail's rule (strip dots, fold case, '+' tag)
+        // without setting any global dot/case policy. strip_subaddress drops the
+        // extracted tag from the canonical form.
+        let config = Config::builder()
+            .provider_aware()
+            .strip_subaddress()
+            .build();
+        let email = EmailAddress::parse_with("A.Li.Ce+promo@Gmail.com", &config)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(email.local_part(), "alice");
+        assert_eq!(email.tag(), Some("promo"));
+        assert_eq!(email.domain(), "gmail.com");
+    }
+
+    #[test]
+    fn provider_aware_gmail_preserves_tag_by_default() {
+        // Default subaddress policy keeps the tag in the canonical local part;
+        // dots are still stripped and case folded by the Gmail rule.
+        let config = Config::builder().provider_aware().build();
+        let email = EmailAddress::parse_with("A.Li.Ce+promo@Gmail.com", &config)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(email.local_part(), "alice+promo");
+        assert_eq!(email.tag(), Some("promo"));
+    }
+
+    #[test]
+    fn provider_aware_leaves_non_provider_domains_to_global_policy() {
+        // A non-provider domain is untouched by provider rules: dots preserved,
+        // local-part case preserved (global defaults).
+        let config = Config::builder().provider_aware().build();
+        let email = EmailAddress::parse_with("A.L.I.C.E@example.com", &config)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(email.local_part(), "A.L.I.C.E");
+        assert_eq!(email.domain(), "example.com");
+    }
+
+    #[test]
+    fn provider_aware_quoted_local_preserves_case() {
+        // A quoted local-part is literal: the provider rule's case folding
+        // (Gmail) must NOT apply inside it, just as dots and the subaddress
+        // separator don't. Without a global lowercase policy, case is preserved.
+        let config = Config::builder().provider_aware().build();
+        let email = EmailAddress::parse_with("\"A.B\"@gmail.com", &config)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(email.local_part(), "A.B");
+
+        // A global lowercase policy is not provider-specific, so it still folds
+        // a quoted local-part — even when a provider rule matches (the rule's
+        // own folding is skipped for quoted, but the global policy still applies).
+        let config = Config::builder().provider_aware().lowercase_all().build();
+        let email = EmailAddress::parse_with("\"A.B\"@gmail.com", &config)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(email.local_part(), "a.b");
+    }
+
+    #[test]
+    fn provider_aware_off_does_not_strip_gmail_dots() {
+        // Without provider_aware and without dots_gmail_only, gmail dots stay.
+        let email: EmailAddress = "a.b.c@gmail.com".parse().unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(email.local_part(), "a.b.c");
+    }
+
+    #[test]
+    fn custom_provider_aware_rule_applies() {
+        use crate::ProviderRule;
+        // Custom provider: strips dots, '-' separator.
+        let config = Config::builder()
+            .provider_aware()
+            .strip_subaddress()
+            .add_provider(
+                ProviderRule::new(["corp.example"])
+                    .strip_dots(true)
+                    .lowercase_local(true)
+                    .subaddress_separator(Some('-')),
+            )
+            .build();
+        let email = EmailAddress::parse_with("John.Doe-tag@corp.example", &config)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(email.local_part(), "johndoe");
+        assert_eq!(email.tag(), Some("tag"));
+    }
+
+    #[test]
+    fn idn_provider_rule_consistent_across_normalization_and_freemail() {
+        use crate::ProviderRule;
+        // A provider rule registered with the Unicode domain must apply to the
+        // IDNA-encoded address for BOTH provider-aware normalization and
+        // is_freemail() — the canonical domain is used at both call sites.
+        let config = Config::builder()
+            .provider_aware()
+            .add_provider(
+                ProviderRule::new(["münchen.de"])
+                    .strip_dots(true)
+                    .lowercase_local(true)
+                    .freemail(true),
+            )
+            .build();
+        let email =
+            EmailAddress::parse_with("A.B@münchen.de", &config).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(email.domain(), "xn--mnchen-3ya.de");
+        assert_eq!(
+            email.local_part(),
+            "ab",
+            "provider rule strips dots + folds case"
+        );
+        assert!(email.is_freemail(), "same rule drives is_freemail");
+    }
+
+    #[test]
+    fn dots_gmail_only_ignores_custom_providers() {
+        use crate::ProviderRule;
+        // GmailOnly is a legacy mode tied to the built-in dot-stripping providers
+        // (Gmail/Googlemail). Custom providers affect normalization ONLY under
+        // provider_aware(); a custom strip_dots rule must NOT leak into GmailOnly
+        // when provider_aware is off.
+        let config = Config::builder()
+            .dots_gmail_only()
+            .add_provider(ProviderRule::new(["corp.example"]).strip_dots(true))
+            .build();
+
+        // The custom provider's strip_dots is ignored: dots are preserved.
+        let email =
+            EmailAddress::parse_with("a.b@corp.example", &config).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(email.local_part(), "a.b");
+
+        // Built-in Gmail still strips dots under GmailOnly.
+        let email =
+            EmailAddress::parse_with("a.b.c@gmail.com", &config).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(email.local_part(), "abc");
     }
 
     // ── Configured parsing ──

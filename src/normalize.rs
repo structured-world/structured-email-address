@@ -45,41 +45,10 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normaliz
     let nfc_local: String = unquoted_local.nfc().collect();
     let nfc_domain: String = domain_str.nfc().collect();
 
-    // Step 2: Case folding.
-    let cased_local = match config.case_policy {
-        CasePolicy::All => nfc_local.to_lowercase(),
-        CasePolicy::Domain | CasePolicy::Preserve => nfc_local,
-    };
-
-    // Steps 3-5: Subaddress and dot normalization apply only to unquoted local-parts.
-    // Inside a quoted-string, '+' and '.' are literal characters, not provider semantics.
-    let (_base_local, tag, local_after_dots) = if is_quoted {
-        (cased_local.clone(), None, cased_local)
-    } else {
-        // Step 3: Extract subaddress tag.
-        let sep = config.subaddress_separator;
-        let (base, tag) = match cased_local.split_once(sep) {
-            Some((base, tag)) if !base.is_empty() => (base.to_string(), Some(tag.to_string())),
-            _ => (cased_local, None),
-        };
-
-        // Step 4: Apply subaddress policy to canonical form.
-        let local_after_tag = match config.subaddress {
-            SubaddressPolicy::Strip => base.clone(),
-            SubaddressPolicy::Preserve => match &tag {
-                Some(t) => format!("{}{}{}", base, sep, t),
-                None => base.clone(),
-            },
-        };
-
-        // Step 5: Dot policy.
-        let after_dots = apply_dot_policy(&local_after_tag, &nfc_domain, config.dot_policy);
-        (base, tag, after_dots)
-    };
-
-    // Step 6: Domain — IDNA encoding (punycode for international domains).
-    // Domain literals (e.g., [192.168.1.1]) are IP addresses, not hostnames — skip IDNA.
-    // Use strict mode: STD3 ASCII deny-list, hyphen checks, DNS length verification.
+    // Canonical (IDNA-ASCII) domain — computed up front so provider lookup,
+    // freemail detection (in parse_with), and the final domain all use the SAME
+    // form. Domain literals ([192.168.1.1]) are IPs, not hostnames — skip IDNA.
+    // Strict mode: STD3 ASCII deny-list, hyphen checks, DNS length verification.
     let canonical_domain = if nfc_domain.starts_with('[') {
         nfc_domain.to_lowercase()
     } else {
@@ -91,7 +60,81 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normaliz
         })?
     };
 
-    // Step 7: IDNA roundtrip — recover Unicode domain when punycode is present.
+    // Provider-aware overrides: when enabled and the domain matches a registered
+    // provider, that rule's case / separator / dot policy governs this address
+    // instead of the global policies. Non-matching domains use the global policies.
+    // Lookup uses the canonical domain so IDN rules match consistently.
+    let provider = if config.provider_aware {
+        config.providers.lookup(&canonical_domain)
+    } else {
+        None
+    };
+
+    // Step 2: Case folding (provider rule overrides the global case policy).
+    // A quoted local-part is literal, so provider semantics never apply inside
+    // it (same as dots/subaddress below) — only a global lowercase policy does.
+    let lowercase_local = match provider {
+        Some(p) if !is_quoted => p.folds_case(),
+        _ => matches!(config.case_policy, CasePolicy::All),
+    };
+    let cased_local = if lowercase_local {
+        nfc_local.to_lowercase()
+    } else {
+        nfc_local
+    };
+
+    // Steps 3-5: Subaddress and dot normalization apply only to unquoted local-parts.
+    // Inside a quoted-string, '+' and '.' are literal characters, not provider semantics.
+    let (_base_local, tag, local_after_dots) = if is_quoted {
+        (cased_local.clone(), None, cased_local)
+    } else {
+        // Step 3: Extract subaddress tag. A provider with no subaddressing
+        // (separator None) disables tag extraction.
+        let sep: Option<char> = match provider {
+            Some(p) => p.separator(),
+            None => Some(config.subaddress_separator),
+        };
+        let (base, tag) = match sep {
+            Some(s) => match cased_local.split_once(s) {
+                Some((base, tag)) if !base.is_empty() => (base.to_string(), Some(tag.to_string())),
+                _ => (cased_local, None),
+            },
+            None => (cased_local, None),
+        };
+
+        // Step 4: Apply subaddress policy to canonical form.
+        let local_after_tag = match config.subaddress {
+            SubaddressPolicy::Strip => base.clone(),
+            SubaddressPolicy::Preserve => match (&tag, sep) {
+                (Some(t), Some(s)) => format!("{base}{s}{t}"),
+                _ => base.clone(),
+            },
+        };
+
+        // Step 5: Dot stripping (provider rule overrides the global dot policy).
+        let strip = match provider {
+            Some(p) => p.strips_dots(),
+            None => match config.dot_policy {
+                DotPolicy::Preserve => false,
+                DotPolicy::Always => true,
+                // Strip only for a BUILT-IN provider that ignores dots
+                // (Gmail/Googlemail). Custom providers affect normalization only
+                // under provider_aware(), so the legacy GmailOnly mode consults
+                // the built-in registry, never config.providers.
+                DotPolicy::GmailOnly => crate::provider::builtin_ref()
+                    .lookup(&canonical_domain)
+                    .is_some_and(|p| p.strips_dots()),
+            },
+        };
+        let after_dots = if strip {
+            local_after_tag.replace('.', "")
+        } else {
+            local_after_tag
+        };
+        (base, tag, after_dots)
+    };
+
+    // Step 6: IDNA roundtrip — recover Unicode domain when punycode is present.
     let domain_unicode = if canonical_domain
         .split('.')
         .any(|label| label.starts_with("xn--"))
@@ -127,26 +170,6 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normaliz
         display_name,
         skeleton: skel,
     })
-}
-
-/// Apply dot-stripping policy.
-fn apply_dot_policy(local: &str, domain: &str, policy: DotPolicy) -> String {
-    match policy {
-        DotPolicy::Preserve => local.to_string(),
-        DotPolicy::Always => local.replace('.', ""),
-        DotPolicy::GmailOnly => {
-            if is_gmail_domain(domain) {
-                local.replace('.', "")
-            } else {
-                local.to_string()
-            }
-        }
-    }
-}
-
-/// Check if domain is a Gmail domain (case-insensitive, allocation-free).
-fn is_gmail_domain(domain: &str) -> bool {
-    domain.eq_ignore_ascii_case("gmail.com") || domain.eq_ignore_ascii_case("googlemail.com")
 }
 
 /// Remove RFC 5322 quoted-pair backslashes (`\"` → `"`, `\\` → `\`)

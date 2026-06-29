@@ -3,6 +3,8 @@
 //! The builder pattern allows fine-grained control over every aspect of
 //! email handling — from RFC strictness level to provider-aware normalization.
 
+use crate::provider::{ProviderRegistry, ProviderRule};
+
 /// How strictly to validate RFC grammar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Strictness {
@@ -95,6 +97,12 @@ pub struct Config {
     pub(crate) allow_domain_literal: bool,
     pub(crate) allow_display_name: bool,
     pub(crate) require_tld_dot: bool,
+    /// When true, a matched provider rule's dot/case/separator override the
+    /// global policies for that address.
+    pub(crate) provider_aware: bool,
+    /// Provider registry: source of truth for [`is_freemail`](crate::EmailAddress::is_freemail)
+    /// (always) and provider-aware normalization (when `provider_aware`).
+    pub(crate) providers: ProviderRegistry,
 }
 
 impl Default for Config {
@@ -110,6 +118,8 @@ impl Default for Config {
             allow_domain_literal: false,
             allow_display_name: false,
             require_tld_dot: true,
+            provider_aware: false,
+            providers: ProviderRegistry::builtin(),
         }
     }
 }
@@ -224,6 +234,37 @@ impl ConfigBuilder {
     /// Syntax-only domain check (default). Resets from `Psl`/`Tld` back to syntax.
     pub fn domain_check_syntax(mut self) -> Self {
         self.0.domain_check = DomainCheck::Syntax;
+        self
+    }
+
+    /// Enable provider-aware normalization.
+    ///
+    /// When enabled, an address whose domain matches a registered
+    /// [`ProviderRule`] is normalized by that provider's rule (dot stripping,
+    /// case folding, subaddress separator) instead of the global policies.
+    /// Addresses with no matching provider still use the global policies.
+    ///
+    /// Provider lookups for [`is_freemail`](crate::EmailAddress::is_freemail)
+    /// work regardless of this setting — it only gates normalization.
+    pub fn provider_aware(mut self) -> Self {
+        self.0.provider_aware = true;
+        self
+    }
+
+    /// Register a custom [`ProviderRule`], extending the built-in registry.
+    ///
+    /// User rules take precedence over built-ins for the same domain, so this
+    /// can also redefine a built-in provider. Affects [`is_freemail`](crate::EmailAddress::is_freemail)
+    /// always, and normalization when [`provider_aware`](Self::provider_aware) is set.
+    pub fn add_provider(mut self, rule: ProviderRule) -> Self {
+        self.0.providers.add(rule);
+        self
+    }
+
+    /// Replace the entire provider registry (e.g. start from
+    /// [`ProviderRegistry::empty`](crate::ProviderRegistry::empty)).
+    pub fn providers(mut self, registry: ProviderRegistry) -> Self {
+        self.0.providers = registry;
         self
     }
 

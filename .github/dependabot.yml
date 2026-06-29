@@ -12,6 +12,11 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # Owned exclusively by the PSL data cascade (psl-cascade.yml), which cuts an
+      # off-tag data-only release. Dependabot bumping it on main would route a PSL
+      # data update through the code path — exactly what the cascade avoids.
+      - dependency-name: "structured-public-domains"
     commit-message:
       prefix: "chore(deps)"
   - package-ecosystem: "github-actions"
