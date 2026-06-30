@@ -196,12 +196,15 @@ jobs:
 
           # Pull the actual domain diff from the upstream data release so the
           # email release notes and CHANGELOG record WHICH domains changed, not
-          # merely that the dependency was bumped. Falls back to a generic line
-          # if the upstream release body is unavailable.
+          # merely that the dependency was bumped. `// ""` maps a JSON-null body
+          # to empty; a blank/absent body can otherwise surface as the literal
+          # string "null", so guard that too and fall back to a generic line.
+          # (Kept inline, not a repo script: the cut step has reset the working
+          # tree to the baseline tag, which predates any such script.)
           UPSTREAM_NOTES=$(gh release view "v${VERSION}" \
             --repo "${GITHUB_REPOSITORY_OWNER}/structured-public-domains" \
-            --json body --jq '.body' 2>/dev/null || true)
-          if [ -z "$UPSTREAM_NOTES" ]; then
+            --json body --jq '.body // ""' 2>/dev/null || true)
+          if [ -z "$UPSTREAM_NOTES" ] || [ "$UPSTREAM_NOTES" = "null" ]; then
             UPSTREAM_NOTES="PSL data: bump structured-public-domains to v${VERSION}."
           fi
           printf '%s\n' "$UPSTREAM_NOTES" > /tmp/upstream-notes.md
@@ -272,8 +275,8 @@ jobs:
           # moved. Falls back to a generic line if the upstream body is missing.
           NOTES=$(gh release view "v${VERSION}" \
             --repo "${GITHUB_REPOSITORY_OWNER}/structured-public-domains" \
-            --json body --jq '.body' 2>/dev/null || true)
-          if [ -z "$NOTES" ]; then
+            --json body --jq '.body // ""' 2>/dev/null || true)
+          if [ -z "$NOTES" ] || [ "$NOTES" = "null" ]; then
             NOTES="PSL data update: structured-public-domains v${VERSION}."
           fi
           printf '%s\n' "$NOTES" > /tmp/sync-notes.md
