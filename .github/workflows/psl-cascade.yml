@@ -194,6 +194,18 @@ jobs:
           cargo clippy --all-features -- -D warnings
           cargo clippy --no-default-features -- -D warnings
 
+          # Pull the actual domain diff from the upstream data release so the
+          # email release notes and CHANGELOG record WHICH domains changed, not
+          # merely that the dependency was bumped. Falls back to a generic line
+          # if the upstream release body is unavailable.
+          UPSTREAM_NOTES=$(gh release view "v${VERSION}" \
+            --repo "${GITHUB_REPOSITORY_OWNER}/structured-public-domains" \
+            --json body --jq '.body' 2>/dev/null || true)
+          if [ -z "$UPSTREAM_NOTES" ]; then
+            UPSTREAM_NOTES="PSL data: bump structured-public-domains to v${VERSION}."
+          fi
+          printf '%s\n' "$UPSTREAM_NOTES" > /tmp/upstream-notes.md
+
           # Prepend a CHANGELOG entry right after the "## [Unreleased]" marker.
           TODAY=$(date -u +%Y-%m-%d)
           {
@@ -201,7 +213,9 @@ jobs:
             echo ""
             echo "### Data"
             echo ""
-            echo "PSL data: bump structured-public-domains to v${VERSION}."
+            echo "PSL data update via structured-public-domains v${VERSION}:"
+            echo ""
+            cat /tmp/upstream-notes.md
           } > /tmp/changelog-entry.md
           python3 - "$NEW" <<'PY'
           import sys, pathlib
@@ -234,7 +248,7 @@ jobs:
           git push origin "v${NEW}"
           git push --force-with-lease -u origin "$BRANCH"
           gh release create "v${NEW}" --title "v${NEW}" \
-            --notes "PSL data update: structured-public-domains v${VERSION}"
+            --notes-file /tmp/upstream-notes.md
 
           echo "new_version=$NEW" >> "$GITHUB_ENV"
 
@@ -253,6 +267,17 @@ jobs:
           git remote set-url origin \
             "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
+          # Reuse the upstream domain diff for the PR body (and, on resync, the
+          # recreated release notes) so the change record names which domains
+          # moved. Falls back to a generic line if the upstream body is missing.
+          NOTES=$(gh release view "v${VERSION}" \
+            --repo "${GITHUB_REPOSITORY_OWNER}/structured-public-domains" \
+            --json body --jq '.body' 2>/dev/null || true)
+          if [ -z "$NOTES" ]; then
+            NOTES="PSL data update: structured-public-domains v${VERSION}."
+          fi
+          printf '%s\n' "$NOTES" > /tmp/sync-notes.md
+
           # Resync path: the release tag exists but never reached main (a prior
           # run failed after tagging). Recreate the branch at the released tag so
           # the same sync PR can be opened. In 'release' mode the branch was
@@ -264,7 +289,7 @@ jobs:
             # tag actually publishes.
             gh release view "$BASE_TAG" >/dev/null 2>&1 || \
               gh release create "$BASE_TAG" --title "$BASE_TAG" \
-                --notes "PSL data update: structured-public-domains v${VERSION}"
+                --notes-file /tmp/sync-notes.md
           fi
 
           # Bring the released data commit onto main via a MERGE commit (not squash
@@ -274,6 +299,11 @@ jobs:
           # Tolerate an already-open PR from a prior partial run.
           gh pr create --base main --head "$BRANCH" \
             --title "feat(data): bump PSL data to structured-public-domains v${VERSION}" \
-            --body "Sync of released PSL data (structured-public-domains v${VERSION}) onto main." \
+            --body-file /tmp/sync-notes.md \
             || true
-          gh pr merge --auto --merge "$BRANCH"
+          # The bot is in the branch-protection bypass list, so a clean PR can be
+          # merged immediately. main has no required status checks, which means a
+          # fresh PR is already mergeable and GitHub REFUSES to enable auto-merge
+          # on it ("clean status" error). So merge directly; fall back to auto
+          # only when checks are still pending (PR not yet mergeable).
+          gh pr merge --merge "$BRANCH" || gh pr merge --auto --merge "$BRANCH"
