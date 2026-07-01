@@ -194,6 +194,21 @@ jobs:
           cargo clippy --all-features -- -D warnings
           cargo clippy --no-default-features -- -D warnings
 
+          # Pull the actual domain diff from the upstream data release so the
+          # email release notes and CHANGELOG record WHICH domains changed, not
+          # merely that the dependency was bumped. `// ""` maps a JSON-null body
+          # to empty; a blank/absent body can otherwise surface as the literal
+          # string "null", so guard that too and fall back to a generic line.
+          # (Kept inline, not a repo script: the cut step has reset the working
+          # tree to the baseline tag, which predates any such script.)
+          UPSTREAM_NOTES=$(gh release view "v${VERSION}" \
+            --repo "${GITHUB_REPOSITORY_OWNER}/structured-public-domains" \
+            --json body --jq '.body // ""' 2>/dev/null || true)
+          if [ -z "$UPSTREAM_NOTES" ] || [ "$UPSTREAM_NOTES" = "null" ]; then
+            UPSTREAM_NOTES="PSL data: bump structured-public-domains to v${VERSION}."
+          fi
+          printf '%s\n' "$UPSTREAM_NOTES" > /tmp/upstream-notes.md
+
           # Prepend a CHANGELOG entry right after the "## [Unreleased]" marker.
           TODAY=$(date -u +%Y-%m-%d)
           {
@@ -201,7 +216,9 @@ jobs:
             echo ""
             echo "### Data"
             echo ""
-            echo "PSL data: bump structured-public-domains to v${VERSION}."
+            echo "PSL data update via structured-public-domains v${VERSION}:"
+            echo ""
+            cat /tmp/upstream-notes.md
           } > /tmp/changelog-entry.md
           python3 - "$NEW" <<'PY'
           import sys, pathlib
@@ -234,7 +251,7 @@ jobs:
           git push origin "v${NEW}"
           git push --force-with-lease -u origin "$BRANCH"
           gh release create "v${NEW}" --title "v${NEW}" \
-            --notes "PSL data update: structured-public-domains v${VERSION}"
+            --notes-file /tmp/upstream-notes.md
 
           echo "new_version=$NEW" >> "$GITHUB_ENV"
 
@@ -253,6 +270,31 @@ jobs:
           git remote set-url origin \
             "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
+          # Reuse the upstream domain diff for the PR body (and, on resync, the
+          # recreated release notes) so the change record names which domains
+          # moved. Falls back to a generic line if the upstream body is missing.
+          NOTES=$(gh release view "v${VERSION}" \
+            --repo "${GITHUB_REPOSITORY_OWNER}/structured-public-domains" \
+            --json body --jq '.body // ""' 2>/dev/null || true)
+          if [ -z "$NOTES" ] || [ "$NOTES" = "null" ]; then
+            NOTES="PSL data update: structured-public-domains v${VERSION}."
+          fi
+          printf '%s\n' "$NOTES" > /tmp/sync-notes.md
+
+          # This text becomes the sync PR body, which targets main — GitHub
+          # processes issue-closing keywords in PR descriptions on the default
+          # branch. Wrap any "closes/fixes/resolves #N" in backticks so stray
+          # upstream text can never close an issue in this repo on merge.
+          python3 - <<'PY'
+          import pathlib, re
+          p = pathlib.Path("/tmp/sync-notes.md")
+          t = p.read_text(encoding="utf-8")
+          t = re.sub(
+              r'(?i)\b(clos(?:e|es|ed)|fix(?:es|ed)?|resolv(?:e|es|ed))(\s+#\d+)',
+              r'`\1`\2', t)
+          p.write_text(t, encoding="utf-8")
+          PY
+
           # Resync path: the release tag exists but never reached main (a prior
           # run failed after tagging). Recreate the branch at the released tag so
           # the same sync PR can be opened. In 'release' mode the branch was
@@ -264,7 +306,7 @@ jobs:
             # tag actually publishes.
             gh release view "$BASE_TAG" >/dev/null 2>&1 || \
               gh release create "$BASE_TAG" --title "$BASE_TAG" \
-                --notes "PSL data update: structured-public-domains v${VERSION}"
+                --notes-file /tmp/sync-notes.md
           fi
 
           # Bring the released data commit onto main via a MERGE commit (not squash
@@ -274,6 +316,31 @@ jobs:
           # Tolerate an already-open PR from a prior partial run.
           gh pr create --base main --head "$BRANCH" \
             --title "feat(data): bump PSL data to structured-public-domains v${VERSION}" \
-            --body "Sync of released PSL data (structured-public-domains v${VERSION}) onto main." \
+            --body-file /tmp/sync-notes.md \
             || true
-          gh pr merge --auto --merge "$BRANCH"
+          # GitHub computes mergeability asynchronously after `gh pr create`, so
+          # mergeStateStatus is briefly UNKNOWN; merging during that window can
+          # flake. Poll a bounded time for it to settle before deciding.
+          for _ in $(seq 1 15); do
+            state=$(gh pr view "$BRANCH" --json mergeStateStatus \
+              --jq '.mergeStateStatus' 2>/dev/null || echo UNKNOWN)
+            [ "$state" != "UNKNOWN" ] && break
+            sleep 2
+          done
+
+          # Decide on the settled state. A real conflict against main (DIRTY /
+          # CONFLICTING) can never merge — fail loudly instead of hiding it. For
+          # every other state merge directly: the bot is in the branch-protection
+          # bypass list and main has no required checks, so a direct merge lands
+          # the PR. Do NOT fall back to `--auto --merge`: that only ENABLES
+          # auto-merge and exits 0, so a never-merging PR would report false
+          # success and the data release would silently never reach main.
+          case "$state" in
+            DIRTY | CONFLICTING)
+              echo "PR $BRANCH mergeStateStatus=$state — merge conflict against main; manual rebase required." >&2
+              exit 1
+              ;;
+            *)
+              gh pr merge --merge "$BRANCH"
+              ;;
+          esac
