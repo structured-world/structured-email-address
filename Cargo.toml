@@ -1,6 +1,6 @@
 [package]
 name = "structured-email-address"
-version = "0.0.11"
+version = "0.0.12"
 edition = "2024"
 rust-version = "1.92"
 authors = ["Structured World Foundation <foundation@sw.foundation>"]
@@ -20,7 +20,7 @@ rayon = ["dep:rayon"]
 
 [dependencies]
 idna = "1.1"
-structured-public-domains = { version = "0.0.12", optional = true }
+structured-public-domains = { version = "0.0.13", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 unicode-normalization = "0.1"
 unicode-security = "0.1"
