@@ -283,14 +283,17 @@ jobs:
 
           # This text becomes the sync PR body, which targets main — GitHub
           # processes issue-closing keywords in PR descriptions on the default
-          # branch. Wrap any "closes/fixes/resolves #N" in backticks so stray
-          # upstream text can never close an issue in this repo on merge.
+          # branch. Wrap any closing keyword that precedes an issue reference in
+          # backticks so stray upstream text can never close an issue in this
+          # repo on merge. Covers the optional colon (`Closes: #10`) and the
+          # cross-repo (`Fixes owner/repo#100`) forms GitHub also recognises.
           python3 - <<'PY'
           import pathlib, re
           p = pathlib.Path("/tmp/sync-notes.md")
           t = p.read_text(encoding="utf-8")
           t = re.sub(
-              r'(?i)\b(clos(?:e|es|ed)|fix(?:es|ed)?|resolv(?:e|es|ed))(\s+#\d+)',
+              r'(?i)\b(clos(?:e|es|ed)|fix(?:es|ed)?|resolv(?:e|es|ed))'
+              r'([:\s]+(?:[\w.\-]+/[\w.\-]+)?#\d+)',
               r'`\1`\2', t)
           p.write_text(t, encoding="utf-8")
           PY
