@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.14](https://github.com/structured-world/structured-email-address/compare/v0.0.13...v0.0.14) - 2026-07-08
+
+### Data
+
+PSL data: bump structured-public-domains to v0.0.15.
+
 ## [0.0.13](https://github.com/structured-world/structured-email-address/compare/v0.0.12...v0.0.13) - 2026-07-07
 
 ### Data
