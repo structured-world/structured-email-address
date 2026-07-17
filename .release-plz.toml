@@ -14,6 +14,10 @@ commit_parsers = [
     { message = "^docs\\(ci\\)", skip = true },
     { message = "^Merge", skip = true },
     { message = "^docs", group = "Documentation" },
+    # PSL data bumps are released off-tag by the cascade (psl-cascade.yml), which
+    # writes their CHANGELOG entry itself. Skip them here so release-plz never
+    # opens an empty duplicate code release for an already-published data bump.
+    { message = "^feat\\(data\\)", skip = true },
     { message = "^feat", group = "Added" },
     { message = "^fix", group = "Fixed" },
     { message = "^perf", group = "Performance" },
