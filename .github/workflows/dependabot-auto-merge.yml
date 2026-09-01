@@ -1,12 +1,27 @@
 name: Dependabot Auto-Merge
 
+# `pull_request_target`, not `pull_request`, because of how Dependabot runs are
+# isolated: a workflow triggered by Dependabot on `pull_request` receives
+# Dependabot secrets rather than Actions secrets, so the organisation's
+# RELEASER_APP_* secrets resolve to empty strings and the App token step fails
+# before it does anything. `pull_request_target` runs in the base branch's
+# context, where those secrets are available, which is also GitHub's own
+# recommendation for this pattern.
+#
+# That context carries write-capable credentials, so this workflow must never
+# execute code from the pull request. It does not: there is no checkout, and
+# every step either reads PR metadata through the API or drives `gh`. Do not add
+# a checkout here — and if one ever becomes necessary, it must not use the head
+# ref.
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened]
 
 permissions:
-  pull-requests: write
-  contents: write
+  # Only what GITHUB_TOKEN needs: `dependabot/fetch-metadata` reads the pull
+  # request. Approving and merging are done with the App token below, so nothing
+  # here needs write access to the repository contents.
+  pull-requests: read
 
 jobs:
   auto-merge:
@@ -14,9 +29,6 @@ jobs:
     if: github.event.pull_request.user.login == 'dependabot[bot]'
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
       - name: Dependabot metadata
         id: metadata
         uses: dependabot/fetch-metadata@v3
@@ -39,3 +51,4 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_REPO: ${{ github.repository }}
