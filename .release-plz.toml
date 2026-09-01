@@ -4,6 +4,12 @@ git_release_enable = true
 changelog_update = true
 git_tag_name = "v{{ version }}"
 publish = false
+# Only open a release PR when a real code change is present. commit_parsers
+# below only control the changelog TEXT — they do NOT stop release-plz from
+# bumping on a package-file change. The PSL cascade syncs its data bumps as
+# `chore(data)` (released off-tag, not by release-plz), so gating on these
+# code types keeps release-plz from opening empty duplicate releases for them.
+release_commits = "^(feat|fix|perf|refactor|docs|test)"
 
 [changelog]
 commit_parsers = [

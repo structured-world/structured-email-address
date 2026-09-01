@@ -236,7 +236,7 @@ jobs:
           PY
 
           git add -A
-          git commit -m "feat(data): bump PSL data to structured-public-domains v${VERSION}"
+          git commit -m "chore(data): bump PSL data to structured-public-domains v${VERSION}"
 
           # Attach the token to origin now (checkout used persist-credentials:
           # false), after the untrusted cargo steps have already run.
@@ -318,7 +318,7 @@ jobs:
           # code release's changelog lists only the code — not the data again.
           # Tolerate an already-open PR from a prior partial run.
           gh pr create --base main --head "$BRANCH" \
-            --title "feat(data): bump PSL data to structured-public-domains v${VERSION}" \
+            --title "chore(data): bump PSL data to structured-public-domains v${VERSION}" \
             --body-file /tmp/sync-notes.md \
             || true
           # GitHub computes mergeability asynchronously after `gh pr create`, so
