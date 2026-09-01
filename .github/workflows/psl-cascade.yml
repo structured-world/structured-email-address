@@ -14,6 +14,13 @@ name: PSL Cascade
 # Until the code release that introduces that dependency is tagged, this workflow
 # refuses to run (the dependency is absent at the tag — see the guard below).
 #
+# The upstream dispatch is an accelerator, not the only path in. Upstream records
+# a delivered DISPATCH, not a successful run here, so a dispatch lost in transit
+# or a run that fails afterwards would freeze this crate's PSL data with nothing
+# to notice. The daily schedule reconciles the pinned version against crates.io
+# and cuts whatever release is owed; when nothing is owed it plans `noop` and
+# stops before the toolchain is even installed.
+#
 # No cancel-in-progress — a run that already tagged/pushed must not be killed.
 concurrency:
   group: psl-cascade
@@ -24,8 +31,12 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "structured-public-domains version"
-        required: true
+        description: "structured-public-domains version (blank: newest on crates.io)"
+        required: false
+  schedule:
+    # After the upstream PSL check (~06:30 UTC), so a same-morning data release is
+    # already published by the time this reconciles against it.
+    - cron: "20 8 * * *"
 
 permissions:
   contents: write
@@ -61,8 +72,30 @@ jobs:
           set -euo pipefail
           VERSION="$VERSION_INPUT"
           if [ -z "$VERSION" ]; then
-            echo "No structured-public-domains version provided." >&2
-            exit 1
+            # Scheduled reconcile, or a manual run that left the input blank: take
+            # the newest release from the crates.io index. Yanked and pre-release
+            # versions are skipped: a data release this crate re-publishes has to
+            # be one its own consumers can resolve.
+            curl -fsS --retry 5 --retry-delay 2 \
+              https://index.crates.io/st/ru/structured-public-domains \
+              > /tmp/spd-index.jsonl
+            # The index goes through a file, not a pipe: `python3 -` already reads
+            # the program from stdin, so a piped body would never reach the script.
+            VERSION=$(python3 - /tmp/spd-index.jsonl <<'PY'
+          import json, pathlib, re, sys
+          stable = re.compile(r"^\d+\.\d+\.\d+$")
+          lines = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+          vers = [
+              rec["vers"]
+              for rec in (json.loads(l) for l in lines if l.strip())
+              if not rec.get("yanked") and stable.match(rec.get("vers", ""))
+          ]
+          if not vers:
+              sys.exit("no published structured-public-domains release found")
+          print(max(vers, key=lambda v: tuple(int(p) for p in v.split("."))))
+          PY
+          )
+            echo "No version given; newest published structured-public-domains is v$VERSION"
           fi
           # Accept only a bare semver (x.y.z); reject anything that could inject.
           printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
@@ -163,6 +196,20 @@ jobs:
           # Branch from the LAST RELEASE so the data release carries no unreleased
           # code that may be sitting on main.
           git checkout -B "$BRANCH" "$BASE_TAG"
+
+          # The bot pushes a ref cut from the baseline TAG, so any workflow file
+          # edited on main after that tag reads to GitHub as a workflow update and
+          # the push is rejected ("refusing to allow a GitHub App to create or
+          # update workflow ... without `workflows` permission"). Bring the
+          # workflows up to main's content first, as their own commit, so the
+          # pushed ref carries nothing the guard can object to and the data commit
+          # below stays a pure dependency bump. Deleting the directory first also
+          # drops a workflow main has since removed.
+          rm -rf .github/workflows
+          git checkout origin/main -- .github/workflows
+          git add -A .github/workflows
+          git diff --cached --quiet \
+            || git commit -m "ci: carry main's workflows into the data release"
 
           # Patch-bump our own version from the baseline; point the dependency at
           # the new structured-public-domains release.
@@ -303,7 +350,19 @@ jobs:
           # the same sync PR can be opened. In 'release' mode the branch was
           # already pushed by the cut step.
           if [ "$MODE" = "sync" ]; then
-            git push origin --force "${BASE_TAG}:refs/heads/${BRANCH}"
+            git config user.name "sw-release-bot[bot]"
+            git config user.email "sw-release-bot[bot]@users.noreply.github.com"
+            git checkout -B "$BRANCH" "$BASE_TAG"
+            # Same workflow-guard overlay as the cut path: the baseline tag may
+            # predate a workflow edit on main, and the bot cannot push a ref that
+            # reads as a workflow update. The tag stays an ancestor of the branch,
+            # which is what the merge below has to preserve.
+            rm -rf .github/workflows
+            git checkout origin/main -- .github/workflows
+            git add -A .github/workflows
+            git diff --cached --quiet \
+              || git commit -m "ci: carry main's workflows into the data release"
+            git push --force-with-lease -u origin "$BRANCH"
             # If the prior run failed at `gh release create`, the release object
             # (and thus the crates.io publish) is missing — recreate it so the
             # tag actually publishes.
