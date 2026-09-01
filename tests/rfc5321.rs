@@ -178,6 +178,25 @@ fn snum_boundaries_hold_at_both_ends() {
 }
 
 #[test]
+fn the_ipv4_tail_of_an_ipv6v4_literal_follows_the_same_snum() {
+    //   IPv6v4-comp = [IPv6-hex *3(":" IPv6-hex)] "::"
+    //                 [IPv6-hex *3(":" IPv6-hex) ":"] IPv4-address-literal
+    // The tail is the same `IPv4-address-literal` as the standalone alternative,
+    // so the `Snum` reading has to agree in both places: padding is inside the
+    // grammar, and the grammar reading cannot accept `[012.0.2.1]` while
+    // refusing the identical octet embedded in an IPv6v4 form.
+    assert!(parses("user@[IPv6:::ffff:012.0.2.1]", &rfc5321()));
+    assert!(parses("user@[IPv6:::ffff:12.0.2.1]", &rfc5321()));
+
+    // The routable reading keeps refusing padding, in the tail as at the top.
+    assert!(!parses("user@[IPv6:::ffff:012.0.2.1]", &routable()));
+    assert!(parses("user@[IPv6:::ffff:12.0.2.1]", &routable()));
+
+    // An out-of-range octet is out of the grammar wherever it sits.
+    assert!(!parses("user@[IPv6:::ffff:256.0.2.1]", &rfc5321()));
+}
+
+#[test]
 fn ipv4_address_literal_needs_exactly_four_octets() {
     //   IPv4-address-literal = Snum 3("." Snum)
     let config = rfc5321();

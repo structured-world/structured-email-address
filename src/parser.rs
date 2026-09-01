@@ -637,6 +637,13 @@ fn is_address_literal(content: &str, policy: AddressLiteral) -> bool {
     if is_ipv6_address_literal(content) {
         return true;
     }
+    // The IPv6v4 forms embed the same `IPv4-address-literal` as the standalone
+    // alternative, so under the grammar reading its `Snum` padding is admitted
+    // in the tail too. `Ipv6Addr` refuses a padded octet, so the tail is
+    // depadded before it sees the address.
+    if policy == AddressLiteral::Rfc5321 && is_ipv6_address_literal_with_padded_tail(content) {
+        return true;
+    }
     // An `IPv6:`-tagged literal that failed the check above is malformed, not a
     // General-address-literal: RFC 5321 §4.1.3 requires a Standardized-tag to be
     // defined by a Standards-Track RFC, and IPv6 is one, so the tag keeps its own
@@ -667,6 +674,62 @@ fn has_ipv6_tag(content: &str) -> bool {
 /// `IPv6-address-literal = "IPv6:" IPv6-addr` (RFC 5321 §4.1.3).
 fn is_ipv6_address_literal(content: &str) -> bool {
     has_ipv6_tag(content) && content[5..].parse::<core::net::Ipv6Addr>().is_ok()
+}
+
+/// The longest `IPv6-addr` is `IPv6v4-full`, which is 6 groups of 4 hex digits
+/// with separators plus a dotted quad: 45 octets. Rounded up to leave room for
+/// the input this rejects rather than truncates.
+const MAX_IPV6_ADDR_LEN: usize = 64;
+
+/// Whether the content is an `IPv6:`-tagged IPv6v4 address whose embedded
+/// `IPv4-address-literal` is valid `Snum` but zero-padded.
+///
+/// `Ipv6Addr` follows the URI grammar's `dec-octet` (RFC 3986 §3.2.2) and
+/// refuses a padded octet, while the mail grammar's `Snum` places no rule on
+/// padding, so the tail is rewritten without it and the whole address re-parsed.
+/// The rewrite goes to the stack: the address has a known upper bound, and this
+/// runs on the parse path.
+fn is_ipv6_address_literal_with_padded_tail(content: &str) -> bool {
+    let Some(addr) = content.get(5..).filter(|_| has_ipv6_tag(content)) else {
+        return false;
+    };
+    // An IPv6v4 form is the only one with a dot, and the tail runs from the last
+    // colon to the end.
+    let Some((head, tail)) = addr.rsplit_once(':') else {
+        return false;
+    };
+    if !is_ipv4_address_literal(tail) {
+        return false;
+    }
+
+    let mut buf = [0_u8; MAX_IPV6_ADDR_LEN];
+    let mut len = 0;
+    let mut push = |bytes: &[u8]| -> bool {
+        let end = len + bytes.len();
+        if end > buf.len() {
+            return false;
+        }
+        buf[len..end].copy_from_slice(bytes);
+        len = end;
+        true
+    };
+
+    if !push(head.as_bytes()) || !push(b":") {
+        return false;
+    }
+    for (i, octet) in tail.split('.').enumerate() {
+        // `is_ipv4_address_literal` already accepted the tail, so every octet is
+        // 1..=3 ASCII digits; trimming zeros can only leave it empty when the
+        // octet was all zeros, which is the one case that keeps a digit.
+        let trimmed = octet.trim_start_matches('0');
+        let digits = if trimmed.is_empty() { "0" } else { trimmed };
+        if (i > 0 && !push(b".")) || !push(digits.as_bytes()) {
+            return false;
+        }
+    }
+
+    core::str::from_utf8(&buf[..len])
+        .is_ok_and(|depadded| depadded.parse::<core::net::Ipv6Addr>().is_ok())
 }
 
 /// Whether the literal content names an IP address rather than an opaque
