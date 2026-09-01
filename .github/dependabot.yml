@@ -13,9 +13,9 @@ updates:
           - "minor"
           - "patch"
     ignore:
-      # Owned exclusively by the PSL data cascade (psl-cascade.yml), which cuts an
-      # off-tag data-only release. Dependabot bumping it on main would route a PSL
-      # data update through the code path — exactly what the cascade avoids.
+      # The requirement is `0`, so every published data release already satisfies
+      # it and CI resolves the newest one on each run. A lockfile bump would
+      # change nothing a consumer sees.
       - dependency-name: "structured-public-domains"
     commit-message:
       prefix: "chore(deps)"

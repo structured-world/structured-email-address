@@ -48,6 +48,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: ${{ runner.os }}-cargo
+      - name: Resolve the newest published PSL data
+        # The crate accepts any structured-public-domains 0.x, so the committed
+        # lockfile is a starting point rather than a contract. Resolving it fresh
+        # here tests what a consumer building today actually gets, and a data
+        # change that breaks a caller surfaces here instead of downstream. The
+        # msrv job deliberately keeps the lockfile, so the toolchain floor stays
+        # a property of this repository and not of the newest upstream release.
+        run: cargo update -p structured-public-domains
       - name: Test (all features)
         run: cargo nextest run --profile ci --all-features
       - name: Test (no default features)
