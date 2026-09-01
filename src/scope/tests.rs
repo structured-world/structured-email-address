@@ -82,6 +82,19 @@ fn an_unknown_tld_is_local_when_the_suffix_list_is_compiled_in() {
 }
 
 #[test]
+fn names_the_dns_never_resolves_are_not_global() {
+    // Special-use names whose resolution is defined to happen outside the DNS.
+    // `Global` claims the global DNS can resolve the name, and for these it
+    // cannot — by the document that reserved them, not by circumstance.
+    //
+    // `.onion` fails in both feature configurations, not just without the
+    // suffix list: the PSL lists `onion`, so asking it returns a known suffix
+    // and reports the name as registrable.
+    assert_eq!(classify("site.onion"), DomainScope::Local);
+    assert_eq!(classify("service.alt"), DomainScope::Local);
+}
+
+#[test]
 fn is_global_folds_the_name_cases() {
     assert!(classify("example.com").is_global());
     assert!(!classify("files.local").is_global());
@@ -115,6 +128,60 @@ fn the_reserved_ipv4_ranges_are_local() {
             "{content} is reserved for use inside a network"
         );
     }
+}
+
+#[test]
+fn the_ipv4_addresses_that_never_leave_the_network_are_local() {
+    for content in [
+        "255.255.255.255", // RFC 919 §7 limited broadcast: never forwarded
+        "224.0.0.1",       // RFC 5771 §4 local network control block
+        "224.0.0.251",     // the same block, where mDNS lives
+        "239.1.2.3",       // RFC 2365 §4 administratively scoped multicast
+    ] {
+        assert_eq!(
+            literal(content),
+            LiteralScope::Ipv4(IpScope::Local),
+            "{content} does not leave the network it is sent on"
+        );
+    }
+}
+
+#[test]
+fn the_ipv4_multicast_that_does_leave_the_network_stays_global() {
+    // The direction that a whole-224/4 rule would get wrong: multicast is not
+    // local by being multicast, only by its assigned scope.
+    for content in [
+        "224.0.1.1", // internetwork control, forwarded
+        "233.1.2.3", // RFC 3180 GLOP, globally assigned
+    ] {
+        assert_eq!(
+            literal(content),
+            LiteralScope::Ipv4(IpScope::Global),
+            "{content} is routable multicast"
+        );
+    }
+}
+
+#[test]
+fn ipv6_multicast_is_local_below_global_scope() {
+    //   RFC 4291 §2.7: the fourth nibble is the scope, and only 0xE is global.
+    for content in [
+        "IPv6:ff01::1", // interface-local
+        "IPv6:ff02::1", // link-local, the all-nodes address
+        "IPv6:ff05::1", // site-local
+        "IPv6:ff08::1", // organization-local
+    ] {
+        assert_eq!(
+            literal(content),
+            LiteralScope::Ipv6(IpScope::Local),
+            "{content} is confined to its scope"
+        );
+    }
+    assert_eq!(
+        literal("IPv6:ff0e::1"),
+        LiteralScope::Ipv6(IpScope::Global),
+        "scope 0xE is global multicast"
+    );
 }
 
 #[test]

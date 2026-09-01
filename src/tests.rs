@@ -407,6 +407,31 @@ fn domain_scope_reads_the_address_that_parsed() {
 }
 
 #[test]
+fn domain_scope_does_not_call_a_bounded_address_global() {
+    // Through the public API, because that is where a caller reading
+    // `is_global()` would be misled: neither of these leaves the network it is
+    // sent on, so reporting either as globally reachable is a false statement
+    // about the address, whatever the caller then does with it.
+    let config = Config::builder().allow_address_literal_rfc5321().build();
+    let scope = |input: &str| {
+        EmailAddress::parse_with(input, &config)
+            .unwrap_or_else(|e| panic!("{input} must parse: {e}"))
+            .domain_scope()
+    };
+
+    assert_eq!(
+        scope("a@[255.255.255.255]"),
+        DomainScope::Literal(LiteralScope::Ipv4(IpScope::Local))
+    );
+    assert_eq!(
+        scope("a@[IPv6:ff02::1]"),
+        DomainScope::Literal(LiteralScope::Ipv6(IpScope::Local))
+    );
+    assert!(!scope("a@[255.255.255.255]").is_global());
+    assert!(!scope("a@[IPv6:ff02::1]").is_global());
+}
+
+#[test]
 fn domain_scope_reads_the_canonical_case() {
     // The reserved names are matched literally, which is only sound because the
     // domain arrives lowercased. Pin it: an address shouted in capitals must

@@ -36,6 +36,12 @@ pub enum DomainScope {
     /// | `.local` | RFC 6762 §3 |
     /// | `home.arpa` | RFC 8375 §2 |
     /// | `.internal` | ICANN Board resolution 2024.07.29.05 |
+    /// | `.onion` | RFC 7686 §1 |
+    /// | `.alt` | RFC 9476 §2 |
+    ///
+    /// The last two are resolved by something other than the DNS rather than
+    /// reserved for a network, so the global DNS cannot resolve them however
+    /// far the name travels.
     ///
     /// A name whose final label is not TLD-like, or which is under no published
     /// public suffix, lands here too: it is a name only the resolver being
@@ -104,9 +110,18 @@ pub enum IpScope {
     /// | `100.64/10` | RFC 6598 §7 |
     /// | `169.254/16` | RFC 3927 §2.1 |
     /// | `127/8`, `0/8` | RFC 1122 §3.2.1.3 |
+    /// | `255.255.255.255` | RFC 919 §7 |
+    /// | `224.0.0/24` | RFC 5771 §4 |
+    /// | `239/8` | RFC 2365 §4 |
     /// | `fc00::/7` | RFC 4193 §3 |
     /// | `fe80::/10` | RFC 4291 §2.5.6 |
     /// | `::1`, `::` | RFC 4291 §2.5.3, §2.5.2 |
+    /// | `ff00::/8` below global scope | RFC 4291 §2.7 |
+    ///
+    /// Multicast is not here for being multicast: an IPv6 group carries its
+    /// scope in the address and only `0xE` is global, and of IPv4 multicast
+    /// only the two blocks above are bounded. `224.0.1.1` and `233.1.2.3` are
+    /// routable and read as [`Global`](Self::Global).
     Local,
 }
 
@@ -123,6 +138,12 @@ const RESERVED: &[&str] = &[
     "local",
     "home.arpa",
     "internal",
+    // Resolved by something other than the DNS, so the global DNS cannot
+    // resolve them however far the name travels. `onion` needs naming here even
+    // where the suffix list is compiled in: the list carries it, so asking the
+    // list alone reports it as a name someone can register.
+    "onion",
+    "alt",
 ];
 
 /// Classify a canonical domain: the bracketed form for an address literal, and
@@ -193,20 +214,31 @@ fn literal_scope(content: &str) -> LiteralScope {
 }
 
 fn ipv4_scope(addr: Ipv4Addr) -> IpScope {
-    let [a, b, ..] = addr.octets();
-    let local = match (a, b) {
+    let [a, b, c, d] = addr.octets();
+    let local = match (a, b, c, d) {
         // RFC 1918 §3: private-use.
-        (10, _) | (192, 168) => true,
-        (172, 16..=31) => true,
+        (10, ..) | (192, 168, ..) => true,
+        (172, 16..=31, ..) => true,
         // RFC 6598 §7: shared address space, 100.64.0.0/10.
-        (100, 64..=127) => true,
+        (100, 64..=127, ..) => true,
         // RFC 3927 §2.1: link-local, 169.254.0.0/16.
-        (169, 254) => true,
+        (169, 254, ..) => true,
         // RFC 1122 §3.2.1.3: loopback (127/8) and "this network" (0/8). Neither
         // is private use in the RFC 1918 sense, and neither leaves the host
         // being asked, so calling either one global would be a false statement
         // to whoever is reading the address.
-        (127 | 0, _) => true,
+        (127 | 0, ..) => true,
+        // RFC 919 §7: the limited broadcast address, which no router forwards.
+        // It sits inside 240/4, which is reserved rather than scoped to a
+        // network, so the rest of that block stays global the way documentation
+        // space does.
+        (255, 255, 255, 255) => true,
+        // Multicast is not local for being multicast, only for its assigned
+        // scope. RFC 5771 §4 gives 224.0.0.0/24 to link-local control traffic,
+        // and RFC 2365 §4 gives 239.0.0.0/8 to administratively scoped groups,
+        // which is the multicast counterpart of RFC 1918. The rest of 224/4 is
+        // routable and stays global.
+        (224, 0, 0, _) | (239, ..) => true,
         _ => false,
     };
     if local {
@@ -225,10 +257,17 @@ fn ipv6_scope(addr: Ipv6Addr) -> IpScope {
         return ipv4_scope(mapped);
     }
     let leading = addr.segments()[0];
+    // RFC 4291 §2.7: a multicast address carries its own scope in the fourth
+    // nibble, and only 0xE is global. Every other value — interface, link,
+    // admin, site, organization, and the two reserved ones — names a boundary
+    // the traffic does not cross, so the address is local by its own
+    // definition rather than by which block it came from.
+    let bounded_multicast = leading & 0xff00 == 0xff00 && leading & 0x000f != 0x000e;
     let local = addr.is_loopback()                  // RFC 4291 §2.5.3: ::1
         || addr.is_unspecified()                    // RFC 4291 §2.5.2: ::
         || leading & 0xfe00 == 0xfc00               // RFC 4193 §3: fc00::/7
-        || leading & 0xffc0 == 0xfe80; // RFC 4291 §2.5.6: fe80::/10
+        || leading & 0xffc0 == 0xfe80               // RFC 4291 §2.5.6: fe80::/10
+        || bounded_multicast;
     if local {
         IpScope::Local
     } else {

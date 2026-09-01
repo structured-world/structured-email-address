@@ -206,10 +206,12 @@ assert!(scope("a@[192.0.2.1]").is_global());
 
 `Local` covers a single label and the names reserved by RFC 6761 (`.test`,
 `.example`, `.invalid`, `.localhost`), RFC 6762 (`.local`), RFC 8375
-(`home.arpa`) and ICANN (`.internal`), matched on whole labels — `notlocal.com`
-is `Global`. A literal reports its family and whether the address is one
-reserved for use inside a network: RFC 1918 and RFC 6598 for v4, `fc00::/7` for
-v6, the link-local ranges, and loopback.
+(`home.arpa`), ICANN (`.internal`), and the two the DNS never resolves at all,
+RFC 7686 (`.onion`) and RFC 9476 (`.alt`) — matched on whole labels, so
+`notlocal.com` is `Global`. A literal reports its family and whether the address
+is one that stays inside a network: RFC 1918 and RFC 6598 for v4, `fc00::/7` for
+v6, the link-local ranges, loopback, the limited broadcast address, and
+multicast below global scope.
 
 Nothing here changes a verdict. A single-label domain stays refused unless
 `allow_single_label_domain` asks for it; the classification is for the consumer
