@@ -163,7 +163,7 @@ Rayon gives ~5x speedup on this workload.
 | `std` | Yes | Operating-system integration in dependencies. Turn it off for `no_std` |
 | `alloc` | Yes (via `std`) | Names the `core` + `alloc` build. An allocator is required either way |
 | `serde` | Yes | Serialize/deserialize as canonical string |
-| `psl` | Yes | Domain validation against Public Suffix List |
+| `psl` | Yes | Domain validation against Public Suffix List. Implies `std` until `structured-public-domains` ships its own no-std build |
 | `rayon` | No | Parallel batch parsing via `parse_batch_par()` (implies `std`) |
 
 ```toml
@@ -185,8 +185,9 @@ structured-email-address = { version = "0.0.16", default-features = false, featu
 ```
 
 An allocator is not optional: every parse produces owned strings. The `psl`
-feature still needs `std`, since `structured-public-domains` has not made the
-same move yet.
+feature declares `std` as a requirement, since `structured-public-domains` has
+not made the same move yet; a no-std build therefore leaves PSL validation out
+and keeps the rest.
 
 ## Anti-Homoglyph Protection
 

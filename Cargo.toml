@@ -25,7 +25,11 @@ std = ["alloc", "idna/std", "unicode-normalization/std", "serde?/std"]
 # serde only provides its `String` impls behind `alloc` or `std`. Without this
 # the advertised `alloc,serde` combination does not compile.
 serde = ["dep:serde", "serde/alloc", "alloc"]
-psl = ["dep:structured-public-domains"]
+# Implies `std` because the published structured-public-domains still does.
+# Without this a consumer can select `alloc,psl` and get a missing-`std` error
+# from inside a dependency instead of a configuration this crate supports.
+# Relaxable once that crate ships its own no-std build: see #77.
+psl = ["dep:structured-public-domains", "std"]
 rayon = ["dep:rayon", "std"]
 
 [dependencies]
