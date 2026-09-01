@@ -146,6 +146,9 @@ pub struct Config {
     pub(crate) address_literal: AddressLiteral,
     pub(crate) allow_display_name: bool,
     pub(crate) require_tld_dot: bool,
+    /// Whether `Local-part` keeps its `Quoted-string` alternative under
+    /// [`Strictness::Strict`]. The other two modes admit it either way.
+    pub(crate) quoted_local_part: bool,
     /// When true, a matched provider rule's dot/case/separator override the
     /// global policies for that address.
     pub(crate) provider_aware: bool,
@@ -167,6 +170,7 @@ impl Default for Config {
             address_literal: AddressLiteral::Reject,
             allow_display_name: false,
             require_tld_dot: true,
+            quoted_local_part: false,
             provider_aware: false,
             providers: ProviderRegistry::builtin(),
         }
@@ -288,6 +292,75 @@ impl ConfigBuilder {
     /// ```
     pub fn allow_address_literal_rfc5321(mut self) -> Self {
         self.0.address_literal = AddressLiteral::Rfc5321;
+        self
+    }
+
+    /// Accept a quoted local part, `"a b"@example.com`.
+    ///
+    /// ```text
+    /// Local-part = Dot-string / Quoted-string
+    /// ```
+    ///
+    /// Under [`Strictness::Strict`] this restores the second alternative (RFC
+    /// 5321 §4.1.2), which is what a consumer validating an identity rather
+    /// than routing mail needs: an X.509 `rfc822Name` is a `Mailbox` (RFC 5280
+    /// §4.2.1.6), and a quoted local part is one.
+    /// [`Standard`](Strictness::Standard) and [`Lax`](Strictness::Lax) already
+    /// read the wider RFC 5322 grammar, which includes the quoted form, so this
+    /// changes nothing there.
+    ///
+    /// This settles the left of the `@` only:
+    ///
+    /// ```text
+    /// Mailbox = Local-part "@" ( Domain / address-literal )
+    /// ```
+    ///
+    /// The right has its own alternatives, and the second of them is off by
+    /// default too. Reading every `Mailbox` the grammar names — which is what a
+    /// certificate can carry — takes all three calls:
+    ///
+    /// ```
+    /// use structured_email_address::{Config, EmailAddress, Strictness};
+    ///
+    /// let mailbox = Config::builder()
+    ///     .strictness(Strictness::Strict)
+    ///     .allow_quoted_local_part()
+    ///     .allow_address_literal_rfc5321()
+    ///     .build();
+    ///
+    /// assert!(EmailAddress::parse_with("\"a b\"@example.com", &mailbox).is_ok());
+    /// assert!(EmailAddress::parse_with("postmaster@[AS400:QSYS]", &mailbox).is_ok());
+    /// ```
+    ///
+    /// A single-label `Domain` is the one place that reading stays narrower
+    /// than the grammar by default: RFC 5321 admits it, and
+    /// [`allow_single_label_domain`](Self::allow_single_label_domain) asks for
+    /// it back.
+    ///
+    /// The alphabet is the envelope one, `qtextSMTP` and `quoted-pairSMTP`:
+    /// printable ASCII and space, with the quote and the backslash reachable
+    /// only through a backslash, plus UTF-8 (RFC 6531 §3.3). It is narrower
+    /// than the RFC 5322 quoted string, so this cannot smuggle the header
+    /// grammar into the envelope one — a tab, a folded line or a control
+    /// character is still refused.
+    ///
+    /// ```
+    /// use structured_email_address::{Config, EmailAddress, Strictness};
+    ///
+    /// let config = Config::builder()
+    ///     .strictness(Strictness::Strict)
+    ///     .allow_quoted_local_part()
+    ///     .build();
+    ///
+    /// let email = EmailAddress::parse_with("\"a b\"@example.com", &config).unwrap();
+    /// assert_eq!(email.local_part(), "a b");
+    /// assert_eq!(email.canonical(), "\"a b\"@example.com");
+    ///
+    /// // A comment is header syntax, and Strict still refuses it.
+    /// assert!(EmailAddress::parse_with("a(c)@example.com", &config).is_err());
+    /// ```
+    pub fn allow_quoted_local_part(mut self) -> Self {
+        self.0.quoted_local_part = true;
         self
     }
 

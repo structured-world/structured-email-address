@@ -21,6 +21,7 @@ Every Rust email crate stops at RFC validation. This one goes further:
 | PSL domain validation | - | - | **Yes** |
 | Anti-homoglyph detection | - | - | **Yes** |
 | IDN domain Unicode accessor | - | - | **Yes** |
+| Global vs local domain scope | - | - | **Yes** |
 | Display name parsing | Yes | - | **Yes** |
 | Configurable strictness | Partial | Partial | **Full** |
 | Serde support | Yes | - | **Yes** |
@@ -156,6 +157,69 @@ Rayon gives ~5x speedup on this workload.
 | `Standard` | RFC 5322 (header) | Default — full grammar, no obsolete forms |
 | `Lax` | RFC 5322 + obs-* | Legacy system interop |
 
+`Strict` refuses a quoted local part, because an address like `"a b"@example.com`
+is valid and unroutable in practice. A consumer reading an identity rather than
+routing to it needs the alternative back, and asks for it:
+
+```rust
+use structured_email_address::{Config, EmailAddress, Strictness};
+
+// RFC 5321 §4.1.2 Mailbox as written: Dot-string or Quoted-string, no comments.
+let mailbox = Config::builder()
+    .strictness(Strictness::Strict)
+    .allow_quoted_local_part()
+    .build();
+
+let email = EmailAddress::parse_with("\"a b\"@example.com", &mailbox).unwrap();
+assert_eq!(email.local_part(), "a b");
+assert_eq!(email.canonical(), "\"a b\"@example.com");
+
+// The alphabet is the envelope one, so header syntax stays out.
+assert!(EmailAddress::parse_with("a(comment)@example.com", &mailbox).is_err());
+```
+
+## Domain Scope
+
+A parse says whether the text is an address the configured grammar names. It
+does not say whether the domain reaches anywhere: `admin@printer`,
+`postmaster@files.local` and `a@[192.168.1.5]` are as well formed as
+`a@example.com`, and what separates them is reach, not syntax.
+
+```rust
+use structured_email_address::{Config, DomainScope, EmailAddress, IpScope, LiteralScope};
+
+let config = Config::builder()
+    .allow_single_label_domain()
+    .allow_address_literal_rfc5321()
+    .build();
+let scope = |input| EmailAddress::parse_with(input, &config).unwrap().domain_scope();
+
+assert_eq!(scope("a@example.com"), DomainScope::Global);
+assert_eq!(scope("admin@printer"), DomainScope::Local);
+assert_eq!(scope("a@files.local"), DomainScope::Local);
+assert_eq!(
+    scope("a@[192.168.1.5]"),
+    DomainScope::Literal(LiteralScope::Ipv4(IpScope::Local)),
+);
+assert!(scope("a@[192.0.2.1]").is_global());
+```
+
+`Local` covers a single label and the names reserved by RFC 6761 (`.test`,
+`.example`, `.invalid`, `.localhost`), RFC 6762 (`.local`), RFC 8375
+(`home.arpa`), ICANN (`.internal`), and the two the DNS never resolves at all,
+RFC 7686 (`.onion`) and RFC 9476 (`.alt`) — matched on whole labels, so
+`notlocal.com` is `Global`. A literal reports its family and whether the address
+is one that stays inside a network: RFC 1918 and RFC 6598 for v4, `fc00::/7` for
+v6, the link-local and site-local ranges, loopback, the limited broadcast
+address, the benchmarking block, and multicast below global scope. An address
+that embeds an IPv4 one reports the reach of the address it holds.
+
+Nothing here changes a verdict. A single-label domain stays refused unless
+`allow_single_label_domain` asks for it; the classification is for the consumer
+that has opted in and now has to tell the two apart. With the `psl` feature off,
+`Global` weakens from "under a published public suffix" to "the final label is
+TLD-like", so a `no_std` consumer gets an answer rather than a compile error.
+
 ## Features
 
 | Feature | Default | Description |
@@ -168,7 +232,7 @@ Rayon gives ~5x speedup on this workload.
 
 ```toml
 # Minimal (no serde, no PSL)
-structured-email-address = { version = "0.0.16", default-features = false }
+structured-email-address = { version = "0.0.17", default-features = false }
 ```
 
 ### `no_std`
@@ -181,7 +245,7 @@ fail on a constraint the host does not have: `std` is present there, so code
 reaching for it still compiles, and the host has the atomics `thumbv6m` lacks.
 
 ```toml
-structured-email-address = { version = "0.0.16", default-features = false, features = ["alloc"] }
+structured-email-address = { version = "0.0.17", default-features = false, features = ["alloc"] }
 ```
 
 An allocator is not optional: every parse produces owned strings. The `psl`

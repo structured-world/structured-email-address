@@ -367,6 +367,91 @@ fn batch_parse_with_config() {
     );
 }
 
+// ── domain_scope() accessor ──
+
+#[test]
+fn domain_scope_reads_the_address_that_parsed() {
+    // The accessor over the whole pipeline, rather than over a domain string:
+    // what it classifies is the canonical domain, so an IDN name and a literal
+    // both arrive here in the form the parse settled on.
+    let config = Config::builder()
+        .allow_single_label_domain()
+        .allow_address_literal_rfc5321()
+        .build();
+    let scope = |input: &str| {
+        EmailAddress::parse_with(input, &config)
+            .unwrap_or_else(|e| panic!("{input} must parse: {e}"))
+            .domain_scope()
+    };
+
+    assert_eq!(scope("a@example.com"), DomainScope::Global);
+    assert_eq!(scope("a@münchen.de"), DomainScope::Global);
+    assert_eq!(scope("admin@printer"), DomainScope::Local);
+    assert_eq!(scope("a@host.local"), DomainScope::Local);
+    assert_eq!(
+        scope("a@[192.168.1.5]"),
+        DomainScope::Literal(LiteralScope::Ipv4(IpScope::Local))
+    );
+    assert_eq!(
+        scope("a@[IPv6:fd00::1]"),
+        DomainScope::Literal(LiteralScope::Ipv6(IpScope::Local))
+    );
+    assert_eq!(
+        scope("a@[192.0.2.1]"),
+        DomainScope::Literal(LiteralScope::Ipv4(IpScope::Global))
+    );
+    assert_eq!(
+        scope("postmaster@[AS400:QSYS]"),
+        DomainScope::Literal(LiteralScope::General)
+    );
+}
+
+#[test]
+fn domain_scope_does_not_call_a_bounded_address_global() {
+    // Through the public API, because that is where a caller reading
+    // `is_global()` would be misled: neither of these leaves the network it is
+    // sent on, so reporting either as globally reachable is a false statement
+    // about the address, whatever the caller then does with it.
+    let config = Config::builder().allow_address_literal_rfc5321().build();
+    let scope = |input: &str| {
+        EmailAddress::parse_with(input, &config)
+            .unwrap_or_else(|e| panic!("{input} must parse: {e}"))
+            .domain_scope()
+    };
+
+    assert_eq!(
+        scope("a@[255.255.255.255]"),
+        DomainScope::Literal(LiteralScope::Ipv4(IpScope::Local))
+    );
+    assert_eq!(
+        scope("a@[IPv6:ff02::1]"),
+        DomainScope::Literal(LiteralScope::Ipv6(IpScope::Local))
+    );
+    assert!(!scope("a@[255.255.255.255]").is_global());
+    assert!(!scope("a@[IPv6:ff02::1]").is_global());
+}
+
+#[test]
+fn domain_scope_reads_the_canonical_case() {
+    // The reserved names are matched literally, which is only sound because the
+    // domain arrives lowercased. Pin it: an address shouted in capitals must
+    // classify the same as the same address in lower case.
+    let config = Config::builder().preserve_case().build();
+    let shouted =
+        EmailAddress::parse_with("A@FILES.LOCAL", &config).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(shouted.domain_scope(), DomainScope::Local);
+}
+
+#[test]
+fn domain_scope_changes_no_verdict() {
+    // The classification is an accessor over an address that already parsed:
+    // asking for it must not change what parses, and a name it calls Local must
+    // still be refused by a config that refuses single labels.
+    assert!("admin@printer".parse::<EmailAddress>().is_err());
+    assert!("a@host.local".parse::<EmailAddress>().is_ok());
+    assert!("a@[192.168.1.5]".parse::<EmailAddress>().is_err());
+}
+
 // ── domain_unicode() accessor ──
 
 #[test]

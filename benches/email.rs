@@ -124,6 +124,38 @@ fn bench_strictness(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_domain_scope(c: &mut Criterion) {
+    let mut group = c.benchmark_group("domain_scope");
+
+    let config = Config::builder()
+        .allow_single_label_domain()
+        .allow_address_literal_rfc5321()
+        .build();
+    let parse = |input: &str| {
+        EmailAddress::parse_with(input, &config).unwrap_or_else(|e| panic!("{input}: {e}"))
+    };
+
+    // One case per arm the classification can take, since they cost different
+    // things: a reserved name stops at the table, a global one goes on to ask
+    // the suffix list, and a literal parses an address instead.
+    let cases = [
+        ("global", parse("a@example.com")),
+        ("reserved", parse("a@files.local")),
+        ("single_label", parse("admin@printer")),
+        ("ipv4_literal", parse("a@[192.168.1.5]")),
+        ("ipv6_literal", parse("a@[IPv6:fd00::1]")),
+        ("general_literal", parse("postmaster@[AS400:QSYS]")),
+    ];
+
+    for (name, email) in &cases {
+        group.bench_with_input(BenchmarkId::from_parameter(name), email, |b, email| {
+            b.iter(|| black_box(email).domain_scope());
+        });
+    }
+
+    group.finish();
+}
+
 fn bench_batch(c: &mut Criterion) {
     let mut group = c.benchmark_group("batch");
     let inputs = batch_inputs();
@@ -175,6 +207,7 @@ criterion_group!(
     bench_parse,
     bench_normalize,
     bench_strictness,
+    bench_domain_scope,
     bench_batch,
     bench_batch_par
 );
@@ -187,6 +220,7 @@ criterion_group!(
     bench_parse,
     bench_normalize,
     bench_strictness,
+    bench_domain_scope,
     bench_batch
 );
 #[cfg(not(feature = "rayon"))]

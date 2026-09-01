@@ -2,18 +2,56 @@
 //!
 //! Grammar reference: RFC 5322 §3.4.1 (addr-spec), §3.2.3 (atom, dot-atom),
 //! §3.2.4 (quoted-string), §3.2.2 (FWS, CFWS), §4.4 (obs-local-part, obs-domain),
-//! RFC 6531 §3.3 (UTF8-non-ascii in atext/qtext/dtext).
+//! RFC 5321 §4.1.2 (Mailbox, Quoted-string), RFC 6531 §3.3 (UTF8-non-ascii in
+//! atext/qtext/dtext).
 //!
 //! This parser produces zero-copy byte-offset spans into the input string.
 
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::config::{AddressLiteral, Strictness};
+use crate::config::{AddressLiteral, Config, Strictness};
 use crate::error::{Error, ErrorKind};
 
 /// Maximum nesting depth for comments and obs-domain recursion.
 const MAX_RECURSION_DEPTH: usize = 128;
+
+/// Which quoted-string grammar a `"..."` run is read against.
+///
+/// The two mail specifications spell the same construct differently, and the
+/// difference is not decorative: the envelope alphabet is the narrower of the
+/// two, so a local part that only the header grammar admits cannot enter
+/// through the envelope one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Quoted {
+    /// `qtextSMTP` / `quoted-pairSMTP` (RFC 5321 §4.1.2), extended with
+    /// `UTF8-non-ascii` (RFC 6531 §3.3).
+    ///
+    /// ```text
+    /// qtextSMTP       = %d32-33 / %d35-91 / %d93-126
+    /// quoted-pairSMTP = %d92 %d32-126
+    /// ```
+    ///
+    /// Space is content rather than folding whitespace, and nothing else that
+    /// is not a printable ASCII character is reachable: no tab, no CRLF
+    /// folding, no control character behind a backslash.
+    Smtp,
+    /// `qtext` / `quoted-pair` (RFC 5322 §3.2.4, §3.2.1), with FWS.
+    Header,
+    /// [`Header`](Self::Header) plus `obs-qtext` and `obs-qp` (RFC 5322 §4.1).
+    Obsolete,
+}
+
+impl Quoted {
+    /// The header alphabet, in its obsolete reading when Lax mode asked for one.
+    fn header(allow_obs: bool) -> Self {
+        if allow_obs {
+            Self::Obsolete
+        } else {
+            Self::Header
+        }
+    }
+}
 
 /// Raw parse result with byte-offset spans into the input.
 #[derive(Debug, Clone)]
@@ -132,15 +170,15 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// Parse an email address string according to the given strictness level.
+/// Parse an email address string against the grammar the config selects.
 ///
-/// If `allow_display_name` is true, accepts `name-addr` format: `"Name" <addr>` or `Name <addr>`.
-pub(crate) fn parse(
-    input: &str,
-    strictness: Strictness,
-    allow_display_name: bool,
-    address_literal: AddressLiteral,
-) -> Result<Parsed<'_>, Error> {
+/// Takes the whole [`Config`], as the other two stages of the pipeline do,
+/// rather than a widening list of grammar knobs: four of them are already
+/// enough for a call site to pass one flag where it meant the other.
+pub(crate) fn parse<'a>(input: &'a str, config: &Config) -> Result<Parsed<'a>, Error> {
+    let strictness = config.strictness;
+    let address_literal = config.address_literal;
+
     if input.is_empty() {
         return Err(Error::new(ErrorKind::Empty, 0));
     }
@@ -161,7 +199,7 @@ pub(crate) fn parse(
     }
 
     // Try name-addr format: display-name? "<" addr-spec ">"
-    let display_name = if allow_display_name {
+    let display_name = if config.allow_display_name {
         try_parse_display_name(&mut parser, allow_obs)
     } else {
         None
@@ -184,7 +222,8 @@ pub(crate) fn parse(
     if !matches!(strictness, Strictness::Strict) {
         skip_cfws(&mut parser, 0);
     }
-    let (local_part, local_part_clean) = parse_local_part(&mut parser, strictness)?;
+    let (local_part, local_part_clean) =
+        parse_local_part(&mut parser, strictness, config.quoted_local_part)?;
     // RFC 5322 allows CFWS around "@" in Standard/Lax modes.
     if !matches!(strictness, Strictness::Strict) {
         skip_cfws(&mut parser, 0);
@@ -236,7 +275,7 @@ fn try_parse_display_name(parser: &mut Parser<'_>, allow_obs: bool) -> Option<Sp
     // Quoted display name: "Name" <addr>
     if parser.peek() == Some('"') {
         let start = parser.pos;
-        if parse_quoted_string(parser, allow_obs).is_err() {
+        if parse_quoted_string(parser, Quoted::header(allow_obs)).is_err() {
             parser.restore(save);
             return None;
         }
@@ -290,18 +329,30 @@ fn try_parse_display_name(parser: &mut Parser<'_>, allow_obs: bool) -> Option<Sp
 fn parse_local_part(
     parser: &mut Parser<'_>,
     strictness: Strictness,
+    quoted_local_part: bool,
 ) -> Result<(Span, Option<String>), Error> {
     let start = parser.pos;
     let allow_obs = matches!(strictness, Strictness::Lax);
 
-    // Reject quoted-string local parts in Strict mode (RFC 5321 envelope).
     if parser.peek() == Some('"') {
         if matches!(strictness, Strictness::Strict) {
-            return Err(parser.error(ErrorKind::InvalidLocalPartChar { ch: '"' }));
+            // `Local-part = Dot-string / Quoted-string` (RFC 5321 §4.1.2). The
+            // second alternative is off by default because Strict exists to
+            // refuse addresses that are valid but unroutable in practice; a
+            // caller reading an identity rather than routing to it asks for it
+            // back. It is then the whole local part — the envelope grammar has
+            // no obs-local-part to continue it with — and it is read against
+            // the envelope alphabet, narrower than the header one, so it cannot
+            // become a way in for a spelling only RFC 5322 admits.
+            if !quoted_local_part {
+                return Err(parser.error(ErrorKind::InvalidLocalPartChar { ch: '"' }));
+            }
+            parse_quoted_string(parser, Quoted::Smtp)?;
+            return Ok((Span::new(start, parser.pos), None));
         }
         if !allow_obs {
             // Standard mode: quoted-string is the entire local-part.
-            parse_quoted_string(parser, false)?;
+            parse_quoted_string(parser, Quoted::Header)?;
             return Ok((Span::new(start, parser.pos), None));
         }
         // Lax mode: fall through — obs-local-part allows quoted-string as first word,
@@ -352,7 +403,7 @@ fn parse_dot_atom_local(parser: &mut Parser<'_>, allow_obs: bool) -> Result<Opti
     // First word: any leading CFWS was already consumed by the caller (`parse`
     // skips it before the local-part). CFWS stripping here applies only between
     // segments, so the first word starts immediately.
-    if !eat_atext_run(parser) && !try_quoted_string(parser, allow_obs) {
+    if !eat_atext_run(parser) && !try_quoted_string(parser, Quoted::header(allow_obs)) {
         return Err(match parser.peek() {
             Some(ch) if ch != '@' => parser.error(ErrorKind::InvalidLocalPartChar { ch }),
             _ => parser.error(ErrorKind::EmptyLocalPart),
@@ -388,7 +439,7 @@ fn parse_dot_atom_local(parser: &mut Parser<'_>, allow_obs: bool) -> Result<Opti
             clean = Some(s);
         }
         let atom_start = parser.pos;
-        if !eat_atext_run(parser) && !try_quoted_string(parser, allow_obs) {
+        if !eat_atext_run(parser) && !try_quoted_string(parser, Quoted::header(allow_obs)) {
             return Err(parser.error(ErrorKind::EmptyLocalPart));
         }
         if let Some(ref mut s) = clean {
@@ -415,9 +466,8 @@ fn eat_atext_run(parser: &mut Parser<'_>) -> bool {
 
 /// Parse quoted-string: `"` (qtext | quoted-pair | FWS)* `"`.
 ///
-/// With `allow_obs`, accepts obs-qtext and obs-qp (control characters) per
-/// RFC 5322 §4.1 — used in Lax mode.
-fn parse_quoted_string(parser: &mut Parser<'_>, allow_obs: bool) -> Result<(), Error> {
+/// `flavor` selects the alphabet: see [`Quoted`].
+fn parse_quoted_string(parser: &mut Parser<'_>, flavor: Quoted) -> Result<(), Error> {
     if !parser.eat('"') {
         return Err(parser.error(ErrorKind::UnterminatedQuotedString));
     }
@@ -431,15 +481,18 @@ fn parse_quoted_string(parser: &mut Parser<'_>, allow_obs: bool) -> Result<(), E
             Some('\\') => {
                 parser.advance();
                 match parser.advance() {
-                    Some(ch) if is_quoted_pair_char(ch, allow_obs) => {}
+                    Some(ch) if is_quoted_pair_char(ch, flavor) => {}
                     _ => return Err(parser.error(ErrorKind::InvalidQuotedPair)),
                 }
             }
-            Some(ch) if is_qtext(ch, allow_obs) => {
+            Some(ch) if is_qtext(ch, flavor) => {
                 parser.advance();
             }
-            // RFC 5322 FWS: plain WSP or CRLF + WSP (folded whitespace).
-            Some(ch) if is_wsp(ch) || ch == '\r' => {
+            // RFC 5322 FWS: plain WSP or CRLF + WSP (folded whitespace). The
+            // envelope grammar has no FWS at all — a space there is qtextSMTP
+            // and was taken above, so what reaches here is a tab or a CR, both
+            // of which `Quoted::Smtp` must refuse rather than fold.
+            Some(ch) if flavor != Quoted::Smtp && (is_wsp(ch) || ch == '\r') => {
                 if !try_eat_fws(parser) {
                     return Err(parser.error(ErrorKind::InvalidLocalPartChar { ch: '\r' }));
                 }
@@ -453,12 +506,12 @@ fn parse_quoted_string(parser: &mut Parser<'_>, allow_obs: bool) -> Result<(), E
 }
 
 /// Try to parse a quoted-string without error on failure.
-fn try_quoted_string(parser: &mut Parser<'_>, allow_obs: bool) -> bool {
+fn try_quoted_string(parser: &mut Parser<'_>, flavor: Quoted) -> bool {
     if parser.peek() != Some('"') {
         return false;
     }
     let save = parser.save();
-    if parse_quoted_string(parser, allow_obs).is_ok() {
+    if parse_quoted_string(parser, flavor).is_ok() {
         true
     } else {
         parser.restore(save);
@@ -641,14 +694,15 @@ fn is_address_literal(content: &str, policy: AddressLiteral) -> bool {
     if policy == AddressLiteral::Reject {
         return false;
     }
-    if is_ipv6_address_literal(content) {
+    if ipv6_address_literal(content).is_some() {
         return true;
     }
     // The IPv6v4 forms embed the same `IPv4-address-literal` as the standalone
     // alternative, so under the grammar reading its `Snum` padding is admitted
     // in the tail too. `Ipv6Addr` refuses a padded octet, so the tail is
     // depadded before it sees the address.
-    if policy == AddressLiteral::Rfc5321 && is_ipv6_address_literal_with_padded_tail(content) {
+    if policy == AddressLiteral::Rfc5321 && ipv6_address_literal_with_padded_tail(content).is_some()
+    {
         return true;
     }
     // An `IPv6:`-tagged literal that failed the check above is malformed, not a
@@ -664,7 +718,7 @@ fn is_address_literal(content: &str, policy: AddressLiteral) -> bool {
         AddressLiteral::Reject => false,
         AddressLiteral::Routable => content.parse::<core::net::Ipv4Addr>().is_ok(),
         AddressLiteral::Rfc5321 => {
-            is_ipv4_address_literal(content) || is_general_address_literal(content)
+            ipv4_address_literal(content).is_some() || is_general_address_literal(content)
         }
     }
 }
@@ -680,8 +734,17 @@ fn has_ipv6_tag(content: &str) -> bool {
 }
 
 /// `IPv6-address-literal = "IPv6:" IPv6-addr` (RFC 5321 §4.1.3).
-fn is_ipv6_address_literal(content: &str) -> bool {
-    has_ipv6_tag(content) && content[5..].parse::<core::net::Ipv6Addr>().is_ok()
+///
+/// Returns the address rather than a verdict: every caller that has to know
+/// whether this is an IPv6 literal also, sooner or later, has to know which
+/// address it is, and parsing it twice to answer the two questions is a cost
+/// with nothing on the other side of it.
+pub(crate) fn ipv6_address_literal(content: &str) -> Option<core::net::Ipv6Addr> {
+    content
+        .get(5..)
+        .filter(|_| has_ipv6_tag(content))?
+        .parse()
+        .ok()
 }
 
 /// The longest `IPv6-addr` is `IPv6v4-full`, which is 6 groups of 4 hex digits
@@ -689,55 +752,48 @@ fn is_ipv6_address_literal(content: &str) -> bool {
 /// the input this rejects rather than truncates.
 const MAX_IPV6_ADDR_LEN: usize = 64;
 
-/// Whether the content is an `IPv6:`-tagged IPv6v4 address whose embedded
-/// `IPv4-address-literal` is valid `Snum` but zero-padded.
+/// The `IPv6:`-tagged IPv6v4 address whose embedded `IPv4-address-literal` is
+/// valid `Snum` but zero-padded, if that is what the content is.
 ///
 /// `Ipv6Addr` follows the URI grammar's `dec-octet` (RFC 3986 §3.2.2) and
 /// refuses a padded octet, while the mail grammar's `Snum` places no rule on
 /// padding, so the tail is rewritten without it and the whole address re-parsed.
 /// The rewrite goes to the stack: the address has a known upper bound, and this
 /// runs on the parse path.
-fn is_ipv6_address_literal_with_padded_tail(content: &str) -> bool {
-    let Some(addr) = content.get(5..).filter(|_| has_ipv6_tag(content)) else {
-        return false;
-    };
+pub(crate) fn ipv6_address_literal_with_padded_tail(content: &str) -> Option<core::net::Ipv6Addr> {
+    let addr = content.get(5..).filter(|_| has_ipv6_tag(content))?;
     // An IPv6v4 form is the only one with a dot, and the tail runs from the last
     // colon to the end.
-    let Some((head, tail)) = addr.rsplit_once(':') else {
-        return false;
-    };
-    if !is_ipv4_address_literal(tail) {
-        return false;
-    }
+    let (head, tail) = addr.rsplit_once(':')?;
+    ipv4_address_literal(tail)?;
 
     let mut buf = [0_u8; MAX_IPV6_ADDR_LEN];
     let mut len = 0;
-    let mut push = |bytes: &[u8]| -> bool {
+    let mut push = |bytes: &[u8]| -> Option<()> {
         let end = len + bytes.len();
         if end > buf.len() {
-            return false;
+            return None;
         }
         buf[len..end].copy_from_slice(bytes);
         len = end;
-        true
+        Some(())
     };
 
-    if !push(head.as_bytes()) || !push(b":") {
-        return false;
-    }
+    push(head.as_bytes())?;
+    push(b":")?;
     for (i, octet) in tail.split('.').enumerate() {
-        // `is_ipv4_address_literal` already accepted the tail, so every octet is
+        // `ipv4_address_literal` already accepted the tail, so every octet is
         // 1..=3 ASCII digits; trimming zeros can only leave it empty when the
         // octet was all zeros, which is the one case that keeps a digit.
         let trimmed = octet.trim_start_matches('0');
         let digits = if trimmed.is_empty() { "0" } else { trimmed };
-        if (i > 0 && !push(b".")) || !push(digits.as_bytes()) {
-            return false;
+        if i > 0 {
+            push(b".")?;
         }
+        push(digits.as_bytes())?;
     }
 
-    core::str::from_utf8(&buf[..len])
-        .is_ok_and(|depadded| depadded.parse::<core::net::Ipv6Addr>().is_ok())
+    core::str::from_utf8(&buf[..len]).ok()?.parse().ok()
 }
 
 /// Whether the literal content names an IP address rather than an opaque
@@ -754,9 +810,9 @@ fn is_ipv6_address_literal_with_padded_tail(content: &str) -> bool {
 /// Leaving either out would classify it as opaque and preserve its case,
 /// splitting one address into two under comparison and hashing.
 pub(crate) fn is_ip_address_literal(content: &str) -> bool {
-    is_ipv6_address_literal(content)
-        || is_ipv6_address_literal_with_padded_tail(content)
-        || is_ipv4_address_literal(content)
+    ipv6_address_literal(content).is_some()
+        || ipv6_address_literal_with_padded_tail(content).is_some()
+        || ipv4_address_literal(content).is_some()
 }
 
 /// `IPv4-address-literal = Snum 3("." Snum)`, `Snum = 1*3DIGIT` in 0..=255
@@ -766,27 +822,29 @@ pub(crate) fn is_ip_address_literal(content: &str) -> bool {
 /// zero-padded octet: that rule comes from the URI grammar's `dec-octet` (RFC
 /// 3986 §3.2.2), not from the mail grammar, which places no rule on padding. So
 /// `[012.0.2.1]` is inside this grammar and outside `Ipv4Addr`.
-fn is_ipv4_address_literal(content: &str) -> bool {
-    let mut octets = 0;
+///
+/// The octets are already decoded on the way to the verdict, so the address is
+/// returned rather than thrown away and recomputed by whoever needs it.
+pub(crate) fn ipv4_address_literal(content: &str) -> Option<core::net::Ipv4Addr> {
+    let mut octets = [0_u8; 4];
+    let mut seen = 0;
     for part in content.split('.') {
-        octets += 1;
-        if octets > 4 {
-            return false;
+        if seen == 4 {
+            return None;
         }
         // 1*3DIGIT: ASCII digits only, so `+7`, `7_0` and Unicode digits are out.
         if part.is_empty() || part.len() > 3 || !part.bytes().all(|b| b.is_ascii_digit()) {
-            return false;
+            return None;
         }
         // At most 3 ASCII digits, so this cannot overflow u16, and the range
         // check below is what rejects 256..=999.
         let value: u16 = part
             .bytes()
             .fold(0, |acc, b| acc * 10 + u16::from(b - b'0'));
-        if value > 255 {
-            return false;
-        }
+        octets[seen] = u8::try_from(value).ok()?;
+        seen += 1;
     }
-    octets == 4
+    (seen == 4).then(|| core::net::Ipv4Addr::from(octets))
 }
 
 /// `General-address-literal = Standardized-tag ":" 1*dcontent`, with
@@ -1000,12 +1058,19 @@ fn is_atext(ch: char) -> bool {
 }
 
 /// qtext (RFC 5322 §3.2.4): printable ASCII except `"` and `\`, plus UTF-8
-/// non-ASCII. With `allow_obs`, also accepts obs-qtext (obs-NO-WS-CTL controls).
-fn is_qtext(ch: char, allow_obs: bool) -> bool {
+/// non-ASCII. [`Quoted::Obsolete`] also accepts obs-qtext (obs-NO-WS-CTL
+/// controls); [`Quoted::Smtp`] reads `qtextSMTP` (RFC 5321 §4.1.2) instead,
+/// which is the same set plus space, since the envelope grammar has no folding
+/// whitespace to confuse a space with.
+fn is_qtext(ch: char, flavor: Quoted) -> bool {
     if ch == '"' || ch == '\\' {
         return false;
     }
-    is_printable_ascii(ch) || is_utf8_non_ascii(ch) || (allow_obs && is_obs_no_ws_ctl(ch))
+    match flavor {
+        Quoted::Smtp => ch == ' ' || is_printable_ascii(ch) || is_utf8_non_ascii(ch),
+        Quoted::Header => is_printable_ascii(ch) || is_utf8_non_ascii(ch),
+        Quoted::Obsolete => is_printable_ascii(ch) || is_utf8_non_ascii(ch) || is_obs_no_ws_ctl(ch),
+    }
 }
 
 /// ctext: printable ASCII except `(`, `)`, `\`, plus UTF-8 non-ASCII.
@@ -1015,13 +1080,23 @@ fn is_ctext(ch: char) -> bool {
 
 /// Characters valid in a quoted-pair after `\` (RFC 5322 §3.2.1: `quoted-pair =
 /// "\" (VCHAR / WSP)`). Non-ASCII is intentionally excluded — RFC 6531 allows
-/// UTF-8 directly in qtext, so escaping it is invalid. With `allow_obs`, also
-/// accepts obs-qp: NUL, CR, LF, and obs-NO-WS-CTL controls.
-fn is_quoted_pair_char(ch: char, allow_obs: bool) -> bool {
-    if is_printable_ascii(ch) || is_wsp(ch) {
-        return true;
+/// UTF-8 directly in qtext, so escaping it is invalid. [`Quoted::Obsolete`]
+/// also accepts obs-qp: NUL, CR, LF, and obs-NO-WS-CTL controls.
+///
+/// [`Quoted::Smtp`] reads `quoted-pairSMTP = %d92 %d32-126` (RFC 5321 §4.1.2),
+/// which is `VCHAR / SP` — space but not tab, the one place the envelope
+/// alphabet is narrower than the header one here.
+fn is_quoted_pair_char(ch: char, flavor: Quoted) -> bool {
+    match flavor {
+        Quoted::Smtp => ch == ' ' || is_printable_ascii(ch),
+        Quoted::Header => is_printable_ascii(ch) || is_wsp(ch),
+        Quoted::Obsolete => {
+            is_printable_ascii(ch)
+                || is_wsp(ch)
+                || matches!(ch, '\0' | '\n' | '\r')
+                || is_obs_no_ws_ctl(ch)
+        }
     }
-    allow_obs && (matches!(ch, '\0' | '\n' | '\r') || is_obs_no_ws_ctl(ch))
 }
 
 /// obs-NO-WS-CTL (RFC 5322 §4.1): control chars usable in obsolete qtext and
