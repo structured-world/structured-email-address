@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.17](https://github.com/structured-world/structured-email-address/compare/v0.0.16...v0.0.17) - 2026-09-01
+
+### Added
+
+- build without std, and read the RFC 5321 address-literal grammar in full ([#76](https://github.com/structured-world/structured-email-address/pull/76))
+
+### Fixed
+
+- *(psl)* accept any published PSL release instead of one pinned snapshot ([#75](https://github.com/structured-world/structured-email-address/pull/75))
+
 ## [0.0.16](https://github.com/structured-world/structured-email-address/compare/v0.0.15...v0.0.16) - 2026-07-15
 
 ### Data
