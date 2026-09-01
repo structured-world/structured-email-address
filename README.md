@@ -210,8 +210,9 @@ assert!(scope("a@[192.0.2.1]").is_global());
 RFC 7686 (`.onion`) and RFC 9476 (`.alt`) — matched on whole labels, so
 `notlocal.com` is `Global`. A literal reports its family and whether the address
 is one that stays inside a network: RFC 1918 and RFC 6598 for v4, `fc00::/7` for
-v6, the link-local ranges, loopback, the limited broadcast address, and
-multicast below global scope.
+v6, the link-local and site-local ranges, loopback, the limited broadcast
+address, the benchmarking block, and multicast below global scope. An address
+that embeds an IPv4 one reports the reach of the address it holds.
 
 Nothing here changes a verdict. A single-label domain stays refused unless
 `allow_single_label_domain` asks for it; the classification is for the consumer

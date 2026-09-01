@@ -121,6 +121,8 @@ fn the_reserved_ipv4_ranges_are_local() {
         "169.254.1.1",     // RFC 3927
         "127.0.0.1",       // RFC 1122 loopback
         "0.0.0.0",         // RFC 1122 "this network"
+        "198.18.0.1",      // RFC 2544 benchmarking, low edge
+        "198.19.255.254",  // RFC 2544 benchmarking, high edge
     ] {
         assert_eq!(
             literal(content),
@@ -200,6 +202,8 @@ fn the_ranges_neighbouring_the_reserved_ipv4_ones_are_global() {
         "126.0.0.1",      // just below 127/8
         "128.0.0.1",      // just above 127/8
         "1.0.0.1",        // just above 0/8
+        "198.17.255.255", // just below 198.18/15
+        "198.20.0.1",     // just above 198.18/15
     ] {
         assert_eq!(
             literal(content),
@@ -235,6 +239,8 @@ fn the_reserved_ipv6_ranges_are_local() {
         "IPv6:fdff::1", // RFC 4193, high edge
         "IPv6:fe80::1", // RFC 4291 link-local, low edge
         "IPv6:febf::1", // RFC 4291 link-local, high edge
+        "IPv6:fec0::1", // RFC 3879 site-local, deprecated but site-scoped
+        "IPv6:feff::1", // the high edge of that block
         "IPv6:::1",     // RFC 4291 loopback
         "IPv6:::",      // RFC 4291 unspecified
     ] {
@@ -250,8 +256,8 @@ fn the_reserved_ipv6_ranges_are_local() {
 fn the_ranges_neighbouring_the_reserved_ipv6_ones_are_global() {
     for content in [
         "IPv6:fbff::1", // just below fc00::/7
-        "IPv6:fe00::1", // above fc00::/7, below fe80::/10
-        "IPv6:fec0::1", // just above fe80::/10
+        "IPv6:fe00::1", // above fc00::/7, below fe80::/10, unassigned
+        "IPv6:fe7f::1", // the high edge of that unassigned gap
     ] {
         assert_eq!(
             literal(content),
@@ -273,6 +279,32 @@ fn an_ipv4_mapped_literal_reports_the_reach_of_the_address_it_holds() {
         literal("IPv6:::ffff:192.0.2.1"),
         LiteralScope::Ipv6(IpScope::Global)
     );
+}
+
+#[test]
+fn an_ipv4_compatible_literal_reports_the_reach_of_the_address_it_holds() {
+    // The deprecated `::a.b.c.d` form (RFC 4291 §2.5.5.1) holds an IPv4 address
+    // just as the mapped form does, and `Ipv6Addr` parses it, so the parser
+    // accepts the literal. Reading only the mapped form would classify one
+    // spelling of a private endpoint as globally reachable.
+    assert_eq!(
+        literal("IPv6:::192.168.1.5"),
+        LiteralScope::Ipv6(IpScope::Local)
+    );
+    assert_eq!(
+        literal("IPv6:::192.0.2.1"),
+        LiteralScope::Ipv6(IpScope::Global)
+    );
+}
+
+#[test]
+fn the_addresses_that_look_like_embedded_ipv4_but_are_not() {
+    // `::1` and `::` sit inside `::/96` and would decode as `0.0.0.1` and
+    // `0.0.0.0` if the embedded-IPv4 reading were applied blindly. They are
+    // loopback and unspecified in their own right, and answering through their
+    // own rule is what keeps the answer true rather than accidentally right.
+    assert_eq!(literal("IPv6:::1"), LiteralScope::Ipv6(IpScope::Local));
+    assert_eq!(literal("IPv6:::"), LiteralScope::Ipv6(IpScope::Local));
 }
 
 #[test]

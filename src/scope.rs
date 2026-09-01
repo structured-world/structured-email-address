@@ -113,10 +113,17 @@ pub enum IpScope {
     /// | `255.255.255.255` | RFC 919 §7 |
     /// | `224.0.0/24` | RFC 5771 §4 |
     /// | `239/8` | RFC 2365 §4 |
+    /// | `198.18/15` | RFC 2544 §C.2.2 |
     /// | `fc00::/7` | RFC 4193 §3 |
     /// | `fe80::/10` | RFC 4291 §2.5.6 |
+    /// | `fec0::/10` | RFC 3879 §2 |
     /// | `::1`, `::` | RFC 4291 §2.5.3, §2.5.2 |
     /// | `ff00::/8` below global scope | RFC 4291 §2.7 |
+    ///
+    /// An address that embeds an IPv4 one, in either the mapped form (RFC 4291
+    /// §2.5.5.2) or the deprecated compatible form (§2.5.5.1), reports the
+    /// reach of the address it holds, so one host does not classify two ways
+    /// for being written two ways.
     ///
     /// Multicast is not here for being multicast: an IPv6 group carries its
     /// scope in the address and only `0xE` is global, and of IPv4 multicast
@@ -228,6 +235,11 @@ fn ipv4_scope(addr: Ipv4Addr) -> IpScope {
         // being asked, so calling either one global would be a false statement
         // to whoever is reading the address.
         (127 | 0, ..) => true,
+        // RFC 2544 §C.2.2: benchmarking, 198.18.0.0/15. Set aside so that test
+        // traffic between network devices cannot escape onto the public
+        // internet, which is the same reason as the blocks above rather than
+        // the "reserved for later" reason that leaves 240/4 global.
+        (198, 18..=19, ..) => true,
         // RFC 919 §7: the limited broadcast address, which no router forwards.
         // It sits inside 240/4, which is reserved rather than scoped to a
         // network, so the rest of that block stays global the way documentation
@@ -249,12 +261,20 @@ fn ipv4_scope(addr: Ipv4Addr) -> IpScope {
 }
 
 fn ipv6_scope(addr: Ipv6Addr) -> IpScope {
-    // RFC 4291 §2.5.5.2: an IPv4-mapped address holds an IPv4 address, and its
-    // reach is that address's reach. Without this, `[IPv6:::ffff:192.168.1.5]`
-    // and `[192.168.1.5]` — the same host, two spellings — would be classified
-    // opposite ways.
-    if let Some(mapped) = addr.to_ipv4_mapped() {
-        return ipv4_scope(mapped);
+    // Answered before the embedded-IPv4 reading below, not after: both sit
+    // inside `::/96` and would decode as `0.0.0.1` and `0.0.0.0`, which lands
+    // on the right answer for the wrong reason. These have a rule of their own.
+    if addr.is_loopback() || addr.is_unspecified() {
+        // RFC 4291 §2.5.3, §2.5.2.
+        return IpScope::Local;
+    }
+    // An address that embeds an IPv4 one has that address's reach: the mapped
+    // form of RFC 4291 §2.5.5.2, and the compatible form of §2.5.5.1, which is
+    // deprecated but still parses and so still reaches this far. Without both,
+    // `[IPv6:::ffff:192.168.1.5]`, `[IPv6:::192.168.1.5]` and `[192.168.1.5]` —
+    // one host, three spellings — would not be classified the same way.
+    if let Some(embedded) = addr.to_ipv4() {
+        return ipv4_scope(embedded);
     }
     let leading = addr.segments()[0];
     // RFC 4291 §2.7: a multicast address carries its own scope in the fourth
@@ -263,10 +283,12 @@ fn ipv6_scope(addr: Ipv6Addr) -> IpScope {
     // the traffic does not cross, so the address is local by its own
     // definition rather than by which block it came from.
     let bounded_multicast = leading & 0xff00 == 0xff00 && leading & 0x000f != 0x000e;
-    let local = addr.is_loopback()                  // RFC 4291 §2.5.3: ::1
-        || addr.is_unspecified()                    // RFC 4291 §2.5.2: ::
-        || leading & 0xfe00 == 0xfc00               // RFC 4193 §3: fc00::/7
+    let local = leading & 0xfe00 == 0xfc00          // RFC 4193 §3: fc00::/7
         || leading & 0xffc0 == 0xfe80               // RFC 4291 §2.5.6: fe80::/10
+        // RFC 3879 deprecated site-local, fec0::/10, but deprecating a block
+        // does not make it reachable: it was defined for use within a site, and
+        // that is what the answer here is about.
+        || leading & 0xffc0 == 0xfec0
         || bounded_multicast;
     if local {
         IpScope::Local
