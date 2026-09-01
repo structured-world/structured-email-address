@@ -76,7 +76,10 @@ jobs:
             # the newest release from the crates.io index. Yanked and pre-release
             # versions are skipped: a data release this crate re-publishes has to
             # be one its own consumers can resolve.
-            curl -fsS --retry 5 --retry-delay 2 \
+            # Deadlines, not just retries: a stalled connection would otherwise
+            # hold the scheduled reconcile open until the job timeout.
+            curl -fsS --retry 5 --retry-delay 2 --retry-max-time 180 \
+              --connect-timeout 10 --max-time 60 \
               https://index.crates.io/st/ru/structured-public-domains \
               > /tmp/spd-index.jsonl
             # The index goes through a file, not a pipe: `python3 -` already reads
