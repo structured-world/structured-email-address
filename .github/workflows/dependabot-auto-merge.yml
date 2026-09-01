@@ -49,6 +49,13 @@ jobs:
         with:
           app-id: ${{ secrets.RELEASER_APP_ID }}
           private-key: ${{ secrets.RELEASER_APP_PRIVATE_KEY }}
+          # Without these the token carries everything the App installation has,
+          # which here is also `actions`, `checks` and `issues`. These two are
+          # what the job uses: `pull-requests` to approve, to read whether
+          # auto-merge is armed and to disarm it, and `contents` because merging
+          # writes to the branch.
+          permission-contents: write
+          permission-pull-requests: write
 
       # Auto-merge, once enabled, outlives the head it was enabled for. GitHub
       # turns it off by itself only when the pusher lacks write access, so a
