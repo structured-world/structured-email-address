@@ -407,6 +407,17 @@ fn domain_scope_reads_the_address_that_parsed() {
 }
 
 #[test]
+fn domain_scope_reads_the_canonical_case() {
+    // The reserved names are matched literally, which is only sound because the
+    // domain arrives lowercased. Pin it: an address shouted in capitals must
+    // classify the same as the same address in lower case.
+    let config = Config::builder().preserve_case().build();
+    let shouted =
+        EmailAddress::parse_with("A@FILES.LOCAL", &config).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(shouted.domain_scope(), DomainScope::Local);
+}
+
+#[test]
 fn domain_scope_changes_no_verdict() {
     // The classification is an accessor over an address that already parsed:
     // asking for it must not change what parses, and a name it calls Local must
