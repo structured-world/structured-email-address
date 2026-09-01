@@ -16,12 +16,18 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
+# Every job below builds Cargo-controlled code — dependency build scripts and
+# proc macros — and none of them push, so each checkout sets
+# `persist-credentials: false`: the token has no use after that step and is not
+# left in .git/config for that code to read.
 jobs:
   lint:
     timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -43,6 +49,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
@@ -68,12 +76,45 @@ jobs:
       - name: Doc tests
         run: cargo test --doc --all-features
 
+  no-std:
+    needs: lint
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # Bare-metal targets, which is the point: a host check cannot fail on
+          # a target constraint the host does not have. `std` is present there,
+          # so code that reaches for it still compiles; thumbv6m additionally
+          # has no compare-and-swap, which catches a dependency reaching for
+          # pointer-width atomics.
+          targets: thumbv7em-none-eabihf, thumbv6m-none-eabi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: no-std
+      - name: Check (no_std + alloc)
+        run: cargo check --target thumbv7em-none-eabihf --no-default-features --features alloc
+      # Every advertised combination, not just the smallest one: a feature that
+      # compiles alone can still fail beside another (serde needs its own `alloc`
+      # to have `String` impls at all).
+      - name: Check (no_std + alloc + serde)
+        run: cargo check --target thumbv7em-none-eabihf --no-default-features --features alloc,serde
+      - name: Check (no_std + alloc, no compare-and-swap)
+        run: cargo check --target thumbv6m-none-eabi --no-default-features --features alloc
+      - name: Clippy (no_std + alloc)
+        run: cargo clippy --target thumbv7em-none-eabihf --no-default-features --features alloc -- -D warnings
+
   cross-i686:
     needs: lint
     timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: i686-unknown-linux-gnu
@@ -92,6 +133,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.92
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
@@ -106,6 +149,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: llvm-tools-preview
@@ -124,6 +169,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:

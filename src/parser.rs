@@ -6,7 +6,10 @@
 //!
 //! This parser produces zero-copy byte-offset spans into the input string.
 
-use crate::config::Strictness;
+use alloc::string::String;
+use alloc::vec::Vec;
+
+use crate::config::{AddressLiteral, Strictness};
 use crate::error::{Error, ErrorKind};
 
 /// Maximum nesting depth for comments and obs-domain recursion.
@@ -136,7 +139,7 @@ pub(crate) fn parse(
     input: &str,
     strictness: Strictness,
     allow_display_name: bool,
-    allow_domain_literal: bool,
+    address_literal: AddressLiteral,
 ) -> Result<Parsed<'_>, Error> {
     if input.is_empty() {
         return Err(Error::new(ErrorKind::Empty, 0));
@@ -192,7 +195,7 @@ pub(crate) fn parse(
     if !matches!(strictness, Strictness::Strict) {
         skip_cfws(&mut parser, 0);
     }
-    let (domain, domain_clean) = parse_domain(&mut parser, strictness, allow_domain_literal)?;
+    let (domain, domain_clean) = parse_domain(&mut parser, strictness, address_literal)?;
 
     if is_angle {
         if !matches!(strictness, Strictness::Strict) {
@@ -470,16 +473,16 @@ fn try_quoted_string(parser: &mut Parser<'_>, allow_obs: bool) -> bool {
 fn parse_domain(
     parser: &mut Parser<'_>,
     strictness: Strictness,
-    allow_domain_literal: bool,
+    address_literal: AddressLiteral,
 ) -> Result<(Span, Option<String>), Error> {
     let start = parser.pos;
 
     // Domain literal: [...]
     if parser.peek() == Some('[') {
-        if !allow_domain_literal {
+        if address_literal == AddressLiteral::Reject {
             return Err(parser.error(ErrorKind::InvalidDomainChar { ch: '[' }));
         }
-        parse_domain_literal(parser)?;
+        parse_domain_literal(parser, address_literal)?;
         return Ok((Span::new(start, parser.pos), None));
     }
 
@@ -586,16 +589,15 @@ fn parse_domain_label(parser: &mut Parser<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-/// Parse domain literal: `[` ... `]`, accepting only valid RFC 5321 §4.1.3
-/// address literals — an IPv4 dotted-quad or an `IPv6:`-tagged IPv6 address.
+/// Parse domain literal: `[` ... `]`, accepting the RFC 5321 §4.1.3
+/// `address-literal` alternatives that `policy` admits.
 ///
-/// General RFC 5322 domain literals (arbitrary `dtext`, e.g.
-/// `[RFC-5322-domain-literal]`) and malformed IP literals (`[255.255.255]`,
-/// `[IPv6:1::2:]`) are syntactically consumed but rejected with
-/// [`ErrorKind::InvalidAddressLiteral`]: a non-IP literal is not a usable mail
-/// destination. This matches the isEmail conformance baseline, which classifies
-/// such tokens as RFC 5322-only (not valid RFC 5321 addresses).
-fn parse_domain_literal(parser: &mut Parser<'_>) -> Result<(), Error> {
+/// Whatever the policy, general RFC 5322 domain literals (arbitrary `dtext`,
+/// e.g. `[RFC-5322-domain-literal]`) and malformed IP literals
+/// (`[255.255.255]`, `[IPv6:1::2:]`) are syntactically consumed and then
+/// rejected with [`ErrorKind::InvalidAddressLiteral`]. That matches the isEmail
+/// conformance baseline, which classifies such tokens as RFC 5322-only.
+fn parse_domain_literal(parser: &mut Parser<'_>, policy: AddressLiteral) -> Result<(), Error> {
     let open = parser.pos;
     if !parser.eat('[') {
         return Err(parser.error(ErrorKind::UnterminatedDomainLiteral));
@@ -606,7 +608,7 @@ fn parse_domain_literal(parser: &mut Parser<'_>) -> Result<(), Error> {
             Some(']') => {
                 let content = &parser.input[content_start..parser.pos];
                 parser.advance(); // consume ']'
-                if is_address_literal(content) {
+                if is_address_literal(content, policy) {
                     return Ok(());
                 }
                 return Err(Error::new(ErrorKind::InvalidAddressLiteral, open));
@@ -628,20 +630,193 @@ fn parse_domain_literal(parser: &mut Parser<'_>) -> Result<(), Error> {
     }
 }
 
-/// Returns true if the domain-literal content (the text between `[` and `]`)
-/// is a valid IPv4 address literal or an `IPv6:`-tagged IPv6 address literal
-/// (RFC 5321 §4.1.3). Uses `core::net` parsers (no-std friendly).
-fn is_address_literal(content: &str) -> bool {
-    use core::net::{Ipv4Addr, Ipv6Addr};
-    // The "IPv6:" tag is an ABNF string literal, hence case-insensitive
-    // (RFC 5234 §2.3): `[ipv6:::1]` and `[IPV6:...]` are equally valid.
-    if content
+/// Returns true if the domain-literal content (the text between `[` and `]`) is
+/// an `address-literal` that `policy` admits (RFC 5321 §4.1.3). Uses `core::net`
+/// parsers, so it needs no allocator.
+fn is_address_literal(content: &str, policy: AddressLiteral) -> bool {
+    // Checked before anything is recognised, so the answer honours the policy
+    // even though `parse_domain` refuses the '[' before reaching here: a
+    // predicate that reports a literal under a policy admitting none would be
+    // wrong the moment it gained a second caller.
+    if policy == AddressLiteral::Reject {
+        return false;
+    }
+    if is_ipv6_address_literal(content) {
+        return true;
+    }
+    // The IPv6v4 forms embed the same `IPv4-address-literal` as the standalone
+    // alternative, so under the grammar reading its `Snum` padding is admitted
+    // in the tail too. `Ipv6Addr` refuses a padded octet, so the tail is
+    // depadded before it sees the address.
+    if policy == AddressLiteral::Rfc5321 && is_ipv6_address_literal_with_padded_tail(content) {
+        return true;
+    }
+    // An `IPv6:`-tagged literal that failed the check above is malformed, not a
+    // General-address-literal: RFC 5321 §4.1.3 requires a Standardized-tag to be
+    // defined by a Standards-Track RFC, and IPv6 is one, so the tag keeps its own
+    // alternative's meaning and cannot be reread as free dcontent.
+    if has_ipv6_tag(content) {
+        return false;
+    }
+
+    match policy {
+        // Returned above.
+        AddressLiteral::Reject => false,
+        AddressLiteral::Routable => content.parse::<core::net::Ipv4Addr>().is_ok(),
+        AddressLiteral::Rfc5321 => {
+            is_ipv4_address_literal(content) || is_general_address_literal(content)
+        }
+    }
+}
+
+/// Whether the literal content carries the `IPv6:` tag, valid address or not.
+///
+/// The tag is an ABNF string literal, hence case-insensitive (RFC 5234 §2.3):
+/// `[ipv6:::1]` and `[IPV6:...]` are equally valid spellings.
+fn has_ipv6_tag(content: &str) -> bool {
+    content
         .get(..5)
         .is_some_and(|tag| tag.eq_ignore_ascii_case("IPv6:"))
-    {
-        return content[5..].parse::<Ipv6Addr>().is_ok();
+}
+
+/// `IPv6-address-literal = "IPv6:" IPv6-addr` (RFC 5321 §4.1.3).
+fn is_ipv6_address_literal(content: &str) -> bool {
+    has_ipv6_tag(content) && content[5..].parse::<core::net::Ipv6Addr>().is_ok()
+}
+
+/// The longest `IPv6-addr` is `IPv6v4-full`, which is 6 groups of 4 hex digits
+/// with separators plus a dotted quad: 45 octets. Rounded up to leave room for
+/// the input this rejects rather than truncates.
+const MAX_IPV6_ADDR_LEN: usize = 64;
+
+/// Whether the content is an `IPv6:`-tagged IPv6v4 address whose embedded
+/// `IPv4-address-literal` is valid `Snum` but zero-padded.
+///
+/// `Ipv6Addr` follows the URI grammar's `dec-octet` (RFC 3986 §3.2.2) and
+/// refuses a padded octet, while the mail grammar's `Snum` places no rule on
+/// padding, so the tail is rewritten without it and the whole address re-parsed.
+/// The rewrite goes to the stack: the address has a known upper bound, and this
+/// runs on the parse path.
+fn is_ipv6_address_literal_with_padded_tail(content: &str) -> bool {
+    let Some(addr) = content.get(5..).filter(|_| has_ipv6_tag(content)) else {
+        return false;
+    };
+    // An IPv6v4 form is the only one with a dot, and the tail runs from the last
+    // colon to the end.
+    let Some((head, tail)) = addr.rsplit_once(':') else {
+        return false;
+    };
+    if !is_ipv4_address_literal(tail) {
+        return false;
     }
-    content.parse::<Ipv4Addr>().is_ok()
+
+    let mut buf = [0_u8; MAX_IPV6_ADDR_LEN];
+    let mut len = 0;
+    let mut push = |bytes: &[u8]| -> bool {
+        let end = len + bytes.len();
+        if end > buf.len() {
+            return false;
+        }
+        buf[len..end].copy_from_slice(bytes);
+        len = end;
+        true
+    };
+
+    if !push(head.as_bytes()) || !push(b":") {
+        return false;
+    }
+    for (i, octet) in tail.split('.').enumerate() {
+        // `is_ipv4_address_literal` already accepted the tail, so every octet is
+        // 1..=3 ASCII digits; trimming zeros can only leave it empty when the
+        // octet was all zeros, which is the one case that keeps a digit.
+        let trimmed = octet.trim_start_matches('0');
+        let digits = if trimmed.is_empty() { "0" } else { trimmed };
+        if (i > 0 && !push(b".")) || !push(digits.as_bytes()) {
+            return false;
+        }
+    }
+
+    core::str::from_utf8(&buf[..len])
+        .is_ok_and(|depadded| depadded.parse::<core::net::Ipv6Addr>().is_ok())
+}
+
+/// Whether the literal content names an IP address rather than an opaque
+/// system address.
+///
+/// Normalization needs this distinction: an IP literal carries no case in
+/// either part, so folding it keeps two spellings of one address equal, while a
+/// `General-address-literal` body is opaque to SMTP and meaningful to the
+/// receiving system, so folding it would hand that system a different address.
+/// The permissive `Snum` reading is used here on purpose, in the standalone
+/// form and in an IPv6v4 tail alike: `[012.0.2.1]` and `[IPv6:::ffff:012.0.2.1]`
+/// are IP literals under the grammar even where the routable reading refuses
+/// them, and folding their case is a no-op rather than a change of meaning.
+/// Leaving either out would classify it as opaque and preserve its case,
+/// splitting one address into two under comparison and hashing.
+pub(crate) fn is_ip_address_literal(content: &str) -> bool {
+    is_ipv6_address_literal(content)
+        || is_ipv6_address_literal_with_padded_tail(content)
+        || is_ipv4_address_literal(content)
+}
+
+/// `IPv4-address-literal = Snum 3("." Snum)`, `Snum = 1*3DIGIT` in 0..=255
+/// (RFC 5321 §4.1.3).
+///
+/// Written out rather than delegated to `core::net::Ipv4Addr`, which rejects a
+/// zero-padded octet: that rule comes from the URI grammar's `dec-octet` (RFC
+/// 3986 §3.2.2), not from the mail grammar, which places no rule on padding. So
+/// `[012.0.2.1]` is inside this grammar and outside `Ipv4Addr`.
+fn is_ipv4_address_literal(content: &str) -> bool {
+    let mut octets = 0;
+    for part in content.split('.') {
+        octets += 1;
+        if octets > 4 {
+            return false;
+        }
+        // 1*3DIGIT: ASCII digits only, so `+7`, `7_0` and Unicode digits are out.
+        if part.is_empty() || part.len() > 3 || !part.bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+        // At most 3 ASCII digits, so this cannot overflow u16, and the range
+        // check below is what rejects 256..=999.
+        let value: u16 = part
+            .bytes()
+            .fold(0, |acc, b| acc * 10 + u16::from(b - b'0'));
+        if value > 255 {
+            return false;
+        }
+    }
+    octets == 4
+}
+
+/// `General-address-literal = Standardized-tag ":" 1*dcontent`, with
+/// `Standardized-tag = Ldh-str` and `dcontent = %d33-90 / %d94-126`
+/// (RFC 5321 §4.1.3).
+///
+/// The tag is not checked against the IANA registry: this crate reads addresses,
+/// it does not deliver to them, and refusing an unregistered but well-formed tag
+/// would fail the document rather than the delivery.
+fn is_general_address_literal(content: &str) -> bool {
+    let Some((tag, body)) = content.split_once(':') else {
+        return false;
+    };
+    is_ldh_str(tag) && !body.is_empty() && body.bytes().all(is_dcontent)
+}
+
+/// `Ldh-str = *( ALPHA / DIGIT / "-" ) Let-dig` (RFC 5321 §4.1.2): letters,
+/// digits and hyphens, ending in a letter or digit.
+fn is_ldh_str(tag: &str) -> bool {
+    tag.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        && tag
+            .bytes()
+            .next_back()
+            .is_some_and(|b| b.is_ascii_alphanumeric())
+}
+
+/// `dcontent = %d33-90 / %d94-126` (RFC 5321 §4.1.3): printable ASCII except
+/// space, `[`, `\`, `]` and DEL.
+fn is_dcontent(b: u8) -> bool {
+    matches!(b, 33..=90 | 94..=126)
 }
 
 /// Try to consume one FWS token: either plain WSP, or CRLF followed by at least one WSP.

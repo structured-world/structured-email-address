@@ -9,6 +9,8 @@
 //! - **Anti-homoglyph protection**: detect Cyrillic/Latin lookalikes via Unicode skeleton
 //! - **Configurable strictness**: Strict (5321), Standard (5322), Lax (obs-* allowed)
 //! - **Zero-copy parsing**: internal spans into the input string
+//! - **`no_std` + `alloc`**: builds for WASM and bare metal; disable the `std`
+//!   feature and enable `alloc`
 //!
 //! # Quick Start
 //!
@@ -37,6 +39,13 @@
     not(test),
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 mod config;
 mod error;
@@ -46,7 +55,8 @@ mod provider;
 mod validate;
 
 pub use config::{
-    CasePolicy, Config, ConfigBuilder, DomainCheck, DotPolicy, Strictness, SubaddressPolicy,
+    AddressLiteral, CasePolicy, Config, ConfigBuilder, DomainCheck, DotPolicy, Strictness,
+    SubaddressPolicy,
 };
 pub use error::{Error, ErrorKind};
 pub use normalize::confusable_skeleton;
@@ -82,7 +92,7 @@ impl EmailAddress {
             input,
             config.strictness,
             config.allow_display_name,
-            config.allow_domain_literal,
+            config.address_literal,
         )?;
 
         let normalized = normalize::normalize(&parsed, config)?;
@@ -125,6 +135,14 @@ impl EmailAddress {
     }
 
     /// The canonical domain (IDNA-encoded, lowercased).
+    ///
+    /// An address literal keeps its brackets and is not IDNA-encoded. An IP
+    /// literal is still lowercased, since neither the `IPv6:` tag nor a hex
+    /// digit carries case; a [`General-address-literal`] keeps the spelling it
+    /// was given, because its body is opaque to SMTP and meaningful only to the
+    /// receiving system.
+    ///
+    /// [`General-address-literal`]: AddressLiteral::Rfc5321
     pub fn domain(&self) -> &str {
         &self.domain
     }
@@ -257,8 +275,8 @@ impl EmailAddress {
     }
 }
 
-impl std::fmt::Display for EmailAddress {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for EmailAddress {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let local = if needs_quoting(&self.local_part) {
             format!("\"{}\"", escape_local_part(&self.local_part))
         } else {
@@ -365,14 +383,14 @@ impl PartialEq for EmailAddress {
 
 impl Eq for EmailAddress {}
 
-impl std::hash::Hash for EmailAddress {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+impl core::hash::Hash for EmailAddress {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.local_part.hash(state);
         self.domain.hash(state);
     }
 }
 
-impl std::str::FromStr for EmailAddress {
+impl core::str::FromStr for EmailAddress {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {

@@ -170,3 +170,37 @@ fn rule_no_subaddressing() {
 fn empty_registry_matches_nothing() {
     assert!(ProviderRegistry::empty().lookup("gmail.com").is_none());
 }
+
+#[test]
+fn matches_canonicalizes_before_comparing() {
+    // The public matcher takes a domain in any spelling and canonicalizes it,
+    // so a rule registered in Unicode answers for the punycode form and back.
+    let rule = ProviderRule::new(["münchen.de"]);
+    assert!(rule.matches("münchen.de"));
+    assert!(rule.matches("xn--mnchen-3ya.de"));
+    assert!(rule.matches("MÜNCHEN.DE"));
+    assert!(!rule.matches("muenchen.de"));
+}
+
+#[test]
+fn a_domain_idna_cannot_encode_falls_back_to_ascii_lowercasing() {
+    // Registry input is arbitrary: a caller can register something IDNA refuses
+    // outright, such as a label that claims to be punycode and decodes to
+    // nothing. Matching must still answer rather than panic, so canonicalization
+    // falls back to ASCII lowercasing and the rule matches itself.
+    let rule = ProviderRule::new(["XN--"]);
+    assert!(rule.matches("xn--"), "the fallback must be self-consistent");
+    assert!(rule.matches("XN--"));
+    assert!(!rule.matches("example.com"));
+}
+
+#[test]
+fn the_default_registry_is_the_built_in_one() {
+    let default = ProviderRegistry::default();
+    assert!(
+        default
+            .lookup("gmail.com")
+            .is_some_and(super::ProviderRule::strips_dots),
+        "Default must carry the built-ins"
+    );
+}
