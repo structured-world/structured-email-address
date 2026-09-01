@@ -739,11 +739,16 @@ fn is_ipv6_address_literal_with_padded_tail(content: &str) -> bool {
 /// either part, so folding it keeps two spellings of one address equal, while a
 /// `General-address-literal` body is opaque to SMTP and meaningful to the
 /// receiving system, so folding it would hand that system a different address.
-/// The permissive `Snum` reading is used here on purpose: `[012.0.2.1]` is an IP
-/// literal under the grammar even where the routable reading refuses it, and
-/// case-folding it either way is a no-op.
+/// The permissive `Snum` reading is used here on purpose, in the standalone
+/// form and in an IPv6v4 tail alike: `[012.0.2.1]` and `[IPv6:::ffff:012.0.2.1]`
+/// are IP literals under the grammar even where the routable reading refuses
+/// them, and folding their case is a no-op rather than a change of meaning.
+/// Leaving either out would classify it as opaque and preserve its case,
+/// splitting one address into two under comparison and hashing.
 pub(crate) fn is_ip_address_literal(content: &str) -> bool {
-    is_ipv6_address_literal(content) || is_ipv4_address_literal(content)
+    is_ipv6_address_literal(content)
+        || is_ipv6_address_literal_with_padded_tail(content)
+        || is_ipv4_address_literal(content)
 }
 
 /// `IPv4-address-literal = Snum 3("." Snum)`, `Snum = 1*3DIGIT` in 0..=255

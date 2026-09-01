@@ -82,6 +82,21 @@ fn an_ip_literal_is_canonicalized_to_one_spelling() {
 }
 
 #[test]
+fn a_padded_ipv6v4_literal_is_still_an_ip_literal() {
+    // The grammar reading accepts a zero-padded tail, and canonicalization has
+    // to follow it there: an IPv6v4 address carries no case whether or not its
+    // tail is padded, so both spellings must land on one domain. Missing this
+    // leaves the padded form classified as an opaque general literal, which
+    // preserves case and splits one address into two.
+    let upper = EmailAddress::parse_with("user@[IPv6:ABCD::012.0.2.1]", &rfc5321())
+        .expect("a padded IPv6v4 literal must parse under the grammar reading");
+    let lower = EmailAddress::parse_with("user@[ipv6:abcd::012.0.2.1]", &rfc5321())
+        .expect("the lowercase spelling must parse too");
+    assert_eq!(upper.domain(), lower.domain());
+    assert_eq!(upper.domain(), "[ipv6:abcd::012.0.2.1]");
+}
+
+#[test]
 fn standardized_tag_is_an_ldh_str() {
     //   Standardized-tag = Ldh-str
     //   Ldh-str = *( ALPHA / DIGIT / "-" ) Let-dig      (RFC 5321 §4.1.2)
