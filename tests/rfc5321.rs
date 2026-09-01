@@ -17,12 +17,21 @@ fn routable() -> Config {
     Config::builder().allow_domain_literal().build()
 }
 
-/// Read `Mailbox` as §4.1.2 writes it: the envelope grammar, both `Local-part`
-/// alternatives, no header syntax.
+/// Read `Mailbox` as §4.1.2 writes it, on both sides of the `@`:
+///
+/// ```text
+/// Mailbox = Local-part "@" ( Domain / address-literal )
+/// ```
+///
+/// Both `Local-part` alternatives, both domain alternatives, and no header
+/// syntax. The one narrowing left is the single-label `Domain`, which the
+/// grammar admits and this crate refuses unless asked; the case that pins that
+/// is `a_single_sub_domain_is_a_domain_only_when_asked_for`.
 fn mailbox() -> Config {
     Config::builder()
         .strictness(Strictness::Strict)
         .allow_quoted_local_part()
+        .allow_address_literal_rfc5321()
         .build()
 }
 

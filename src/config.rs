@@ -302,12 +302,40 @@ impl ConfigBuilder {
     /// ```
     ///
     /// Under [`Strictness::Strict`] this restores the second alternative (RFC
-    /// 5321 §4.1.2), so the pair reads the envelope grammar as written, which
-    /// is what a consumer validating an identity rather than routing mail
-    /// needs: an X.509 `rfc822Name` is a `Mailbox` (RFC 5280 §4.2.1.6), and a
-    /// quoted local part is one. [`Standard`](Strictness::Standard) and
-    /// [`Lax`](Strictness::Lax) already read the wider RFC 5322 grammar, which
-    /// includes the quoted form, so this changes nothing there.
+    /// 5321 §4.1.2), which is what a consumer validating an identity rather
+    /// than routing mail needs: an X.509 `rfc822Name` is a `Mailbox` (RFC 5280
+    /// §4.2.1.6), and a quoted local part is one.
+    /// [`Standard`](Strictness::Standard) and [`Lax`](Strictness::Lax) already
+    /// read the wider RFC 5322 grammar, which includes the quoted form, so this
+    /// changes nothing there.
+    ///
+    /// This settles the left of the `@` only:
+    ///
+    /// ```text
+    /// Mailbox = Local-part "@" ( Domain / address-literal )
+    /// ```
+    ///
+    /// The right has its own alternatives, and the second of them is off by
+    /// default too. Reading every `Mailbox` the grammar names — which is what a
+    /// certificate can carry — takes all three calls:
+    ///
+    /// ```
+    /// use structured_email_address::{Config, EmailAddress, Strictness};
+    ///
+    /// let mailbox = Config::builder()
+    ///     .strictness(Strictness::Strict)
+    ///     .allow_quoted_local_part()
+    ///     .allow_address_literal_rfc5321()
+    ///     .build();
+    ///
+    /// assert!(EmailAddress::parse_with("\"a b\"@example.com", &mailbox).is_ok());
+    /// assert!(EmailAddress::parse_with("postmaster@[AS400:QSYS]", &mailbox).is_ok());
+    /// ```
+    ///
+    /// A single-label `Domain` is the one place that reading stays narrower
+    /// than the grammar by default: RFC 5321 admits it, and
+    /// [`allow_single_label_domain`](Self::allow_single_label_domain) asks for
+    /// it back.
     ///
     /// The alphabet is the envelope one, `qtextSMTP` and `quoted-pairSMTP`:
     /// printable ASCII and space, with the quote and the backslash reachable
