@@ -1,4 +1,6 @@
 use super::*;
+use alloc::vec;
+
 use crate::config::Config;
 use crate::parser;
 
@@ -7,7 +9,7 @@ fn parse_and_normalize(input: &str, config: &Config) -> Normalized {
         input,
         config.strictness,
         config.allow_display_name,
-        config.allow_domain_literal,
+        config.address_literal,
     )
     .unwrap_or_else(|e| panic!("parse failed for '{input}': {e}"));
     normalize(&parsed, config).unwrap_or_else(|e| panic!("normalize failed for '{input}': {e}"))

@@ -1,4 +1,5 @@
 use super::*;
+use alloc::format;
 
 // ── FromStr (default config) ──
 

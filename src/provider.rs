@@ -10,6 +10,11 @@
 //!
 //! [`EmailAddress::is_freemail`]: crate::EmailAddress::is_freemail
 
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
+use once_cell::race::OnceBox;
+
 /// Normalization rule for one mail provider (a set of equivalent domains).
 ///
 /// Construct with [`ProviderRule::new`] and refine with the builder-style
@@ -139,15 +144,20 @@ pub struct ProviderRegistry {
 
 // Process-wide built-in registry, constructed once. `builtin()` clones it and
 // the GmailOnly dot-policy borrows it, so neither pays a per-call allocation.
-// no-std: once_cell::race::OnceBox (alloc) or a caller-injected registry.
-static BUILTIN: std::sync::LazyLock<ProviderRegistry> = std::sync::LazyLock::new(|| {
+// `race::OnceBox` rather than `std::sync::LazyLock`: same single-initialization
+// contract on an acquire load, without tying the crate to std for one static.
+static BUILTIN: OnceBox<ProviderRegistry> = OnceBox::new();
+
+/// Build the built-in rule set. Called at most once per process, through
+/// [`BUILTIN`].
+fn build_builtin() -> ProviderRegistry {
     let p = |domains: &[&str]| {
         ProviderRule::new(domains.iter().copied())
             .lowercase_local(true)
             .freemail(true)
     };
     ProviderRegistry {
-        rules: vec![
+        rules: alloc::vec![
             p(&["gmail.com", "googlemail.com"]).strip_dots(true),
             p(&["outlook.com", "hotmail.com", "live.com", "msn.com"]),
             p(&["yahoo.com", "yahoo.co.uk", "yahoo.co.jp"]),
@@ -169,11 +179,11 @@ static BUILTIN: std::sync::LazyLock<ProviderRegistry> = std::sync::LazyLock::new
             ]),
         ],
     }
-});
+}
 
 /// Borrow the process-wide built-in registry without allocating.
 pub(crate) fn builtin_ref() -> &'static ProviderRegistry {
-    &BUILTIN
+    BUILTIN.get_or_init(|| Box::new(build_builtin()))
 }
 
 impl ProviderRegistry {

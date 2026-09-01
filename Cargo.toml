@@ -13,17 +13,36 @@ keywords = ["email", "email-address", "validation", "rfc-5322", "normalization"]
 categories = ["parser-implementations", "text-processing"]
 
 [features]
-default = ["serde", "psl"]
+default = ["std", "serde", "psl"]
+# The crate is written against `core` + `alloc`; an allocator is not optional,
+# since every parse produces owned strings. This feature carries no code of its
+# own and exists so a no-std consumer can name the shape it is asking for.
+alloc = []
+# Everything that genuinely needs an operating system: `std::error::Error`
+# integration in dependencies, and rayon's thread pool.
+std = ["alloc", "idna/std", "unicode-normalization/std", "serde?/std"]
 serde = ["dep:serde"]
 psl = ["dep:structured-public-domains"]
-rayon = ["dep:rayon"]
+rayon = ["dep:rayon", "std"]
 
 [dependencies]
-idna = "1.1"
+idna = { version = "1.1", default-features = false, features = [
+    "alloc",
+    "compiled_data",
+] }
 structured-public-domains = { version = "0.0.17", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
-unicode-normalization = "0.1"
-unicode-security = "0.1"
+serde = { version = "1", default-features = false, features = [
+    "derive",
+], optional = true }
+unicode-normalization = { version = "0.1", default-features = false }
+unicode-security = { version = "0.1", default-features = false }
+# Lazily built process-wide provider registry. `race::OnceBox` is the core+alloc
+# equivalent of `std::sync::LazyLock`, which would tie the crate to std for a
+# single static.
+once_cell = { version = "1", default-features = false, features = [
+    "alloc",
+    "race",
+] }
 rayon = { version = "1", optional = true }
 
 [dev-dependencies]

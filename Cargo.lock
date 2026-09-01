@@ -590,6 +590,7 @@ version = "0.0.16"
 dependencies = [
  "criterion",
  "idna",
+ "once_cell",
  "rayon",
  "roxmltree",
  "serde",

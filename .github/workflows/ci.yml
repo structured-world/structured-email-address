@@ -55,6 +55,26 @@ jobs:
       - name: Doc tests
         run: cargo test --doc --all-features
 
+  no-std:
+    needs: lint
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # A bare-metal target with no `std` at all. Checking this on a host
+          # target would prove nothing: with std present, feature resolution can
+          # pull it back in and the build passes where the real target fails.
+          targets: thumbv7em-none-eabihf
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: no-std
+      - name: Check (no_std + alloc)
+        run: cargo check --target thumbv7em-none-eabihf --no-default-features --features alloc
+      - name: Clippy (no_std + alloc)
+        run: cargo clippy --target thumbv7em-none-eabihf --no-default-features --features alloc -- -D warnings
+
   cross-i686:
     needs: lint
     timeout-minutes: 15

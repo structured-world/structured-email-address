@@ -1,4 +1,5 @@
 use super::*;
+use alloc::string::ToString;
 
 #[test]
 fn display_and_accessors_cover_all_kinds() {
