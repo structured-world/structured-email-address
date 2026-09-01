@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.19](https://github.com/structured-world/structured-email-address/compare/v0.0.18...v0.0.19) - 2026-09-01
+
+### Fixed
+
+- *(ci)* stop the disarm step firing on reruns and on a moved head ([#88](https://github.com/structured-world/structured-email-address/pull/88))
+
 ## [0.0.18](https://github.com/structured-world/structured-email-address/compare/v0.0.17...v0.0.18) - 2026-09-01
 
 ### Added
