@@ -23,6 +23,12 @@ permissions:
   # here needs write access to the repository contents.
   pull-requests: read
 
+# One run per pull request, and a new push cancels the run it superseded rather
+# than leaving it racing toward a head that no longer exists.
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
@@ -32,9 +38,12 @@ jobs:
     # maintainer add commits to an open Dependabot PR and have this job approve
     # and auto-merge them with the App token, which is precisely the independent
     # review that approval is supposed to represent.
+    # `triggering_actor` as well as `actor`: on a rerun the latter keeps the
+    # original run's value, so only the former shows who asked for this one.
     if: >-
       github.event.pull_request.user.login == 'dependabot[bot]'
       && github.actor == 'dependabot[bot]'
+      && github.triggering_actor == 'dependabot[bot]'
 
     steps:
       # Pinned to commit SHAs, not tags, because `pull_request_target` puts the
@@ -58,10 +67,19 @@ jobs:
 
       - name: Approve and enable auto-merge for minor/patch updates
         if: steps.metadata.outputs.update-type == 'version-update:semver-minor' || steps.metadata.outputs.update-type == 'version-update:semver-patch'
+        # Both operations name the head this run actually inspected, rather than
+        # just the pull request. Without that they act on whatever the head is
+        # by the time they run, which is not necessarily what the checks above
+        # passed on: a push can land in between, and a rerun of an older run
+        # keeps `github.actor` as dependabot while pointing at a newer head. The
+        # approval is recorded against a commit id, and the merge refuses
+        # outright if the head has moved.
         run: |
-          gh pr review --approve "$PR_NUMBER"
-          gh pr merge --auto --squash "$PR_NUMBER"
+          gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}/reviews" \
+            -f event=APPROVE -f commit_id="$HEAD_SHA" --silent
+          gh pr merge --auto --squash --match-head-commit "$HEAD_SHA" "$PR_NUMBER"
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GH_REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
