@@ -53,8 +53,11 @@ pub enum CasePolicy {
 ///                         General-address-literal ) "]"
 /// ```
 ///
-/// A mail destination only has use for the first two, so that is the default
-/// reading. A reader of an identity rather than a destination needs the third:
+/// A domain literal is refused unless asked for, so the default is
+/// [`Reject`](Self::Reject). Of the two readings a caller can opt into, the
+/// destination-oriented one, [`Routable`](Self::Routable), covers the first two
+/// alternatives, which are the only ones mail can be delivered to. A reader of
+/// an identity rather than a destination needs the third:
 /// an X.509 `rfc822Name` is a `Mailbox` as RFC 5321 defines it (RFC 5280
 /// §4.2.1.6), and refusing a spelling the grammar names makes the certificate
 /// carrying it unreadable rather than merely unroutable.

@@ -176,9 +176,9 @@ structured-email-address = { version = "0.0.16", default-features = false }
 The parser and validator build against `core` + `alloc`, so they run in a WASM
 sandbox or on bare metal. Nothing here needs a pointer-width atomic either, so
 the crate builds on targets without compare-and-swap. CI checks both
-`thumbv7em-none-eabihf` and `thumbv6m-none-eabi`, targets with no `std` at all;
-checking on a host target proves nothing, because feature resolution can pull
-`std` back in and the build passes where the real target fails.
+`thumbv7em-none-eabihf` and `thumbv6m-none-eabi`, because a host check cannot
+fail on a constraint the host does not have: `std` is present there, so code
+reaching for it still compiles, and the host has the atomics `thumbv6m` lacks.
 
 ```toml
 structured-email-address = { version = "0.0.16", default-features = false, features = ["alloc"] }
