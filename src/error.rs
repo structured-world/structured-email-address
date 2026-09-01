@@ -1,5 +1,6 @@
 //! Error types for email address parsing and validation.
 
+use alloc::string::String;
 use core::fmt;
 
 /// Error returned when parsing or validating an email address fails.
@@ -119,7 +120,10 @@ impl fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {}
+// `core::error::Error` rather than `std::error::Error`: the same trait, reachable
+// without an operating system (stable since Rust 1.81, below this crate's MSRV),
+// so `?` into a `Box<dyn Error>` keeps working for std callers unchanged.
+impl core::error::Error for Error {}
 
 #[cfg(test)]
 mod tests;

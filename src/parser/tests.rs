@@ -1,17 +1,19 @@
 use super::*;
+use alloc::format;
+use alloc::string::ToString;
 
 fn parse_ok(input: &str) -> Parsed<'_> {
-    parse(input, Strictness::Standard, false, false)
+    parse(input, Strictness::Standard, false, AddressLiteral::Reject)
         .unwrap_or_else(|e| panic!("failed to parse '{input}': {e}"))
 }
 
 fn parse_ok_lax(input: &str) -> Parsed<'_> {
-    parse(input, Strictness::Lax, false, false)
+    parse(input, Strictness::Lax, false, AddressLiteral::Reject)
         .unwrap_or_else(|e| panic!("failed to parse '{input}': {e}"))
 }
 
 fn parse_err(input: &str) -> Error {
-    parse(input, Strictness::Standard, false, false)
+    parse(input, Strictness::Standard, false, AddressLiteral::Reject)
         .expect_err(&format!("expected error for '{input}'"))
 }
 
@@ -99,25 +101,39 @@ fn trailing_dot_in_local_part_is_not_missing_at_sign() {
 fn obs_local_part_quoted_first_word() {
     // obs-local-part: word *("." word), where word can be quoted-string.
     // "a".b@example.com must parse in Lax mode.
-    let p = parse("\"a\".b@example.com", Strictness::Lax, false, false).unwrap_or_else(|e| {
-        panic!("Lax must accept obs-local-part starting with quoted word: {e}")
-    });
+    let p = parse(
+        "\"a\".b@example.com",
+        Strictness::Lax,
+        false,
+        AddressLiteral::Reject,
+    )
+    .unwrap_or_else(|e| panic!("Lax must accept obs-local-part starting with quoted word: {e}"));
     assert_eq!(p.local_part.as_str(p.input), "\"a\".b");
     assert_eq!(p.domain.as_str(p.input), "example.com");
 }
 
 #[test]
 fn obs_local_part_rejected_in_standard() {
-    let e = parse("a.\"b\"@example.com", Strictness::Standard, false, false)
-        .expect_err("expected obs-local-part to be rejected in Standard strictness");
+    let e = parse(
+        "a.\"b\"@example.com",
+        Strictness::Standard,
+        false,
+        AddressLiteral::Reject,
+    )
+    .expect_err("expected obs-local-part to be rejected in Standard strictness");
     // Should fail due to local-part syntax, not due to a missing '@'.
     assert_ne!(e.kind(), &ErrorKind::MissingAtSign);
 }
 
 #[test]
 fn obs_local_part_accepted_in_lax() {
-    let p = parse("a.\"b\"@example.com", Strictness::Lax, false, false)
-        .unwrap_or_else(|e| panic!("parse failed in Lax strictness: {e}"));
+    let p = parse(
+        "a.\"b\"@example.com",
+        Strictness::Lax,
+        false,
+        AddressLiteral::Reject,
+    )
+    .unwrap_or_else(|e| panic!("parse failed in Lax strictness: {e}"));
     assert_eq!(p.local_part.as_str(p.input), "a.\"b\"");
     assert_eq!(p.domain.as_str(p.input), "example.com");
 }
@@ -130,7 +146,7 @@ fn display_name_angle() {
         "John Doe <user@example.com>",
         Strictness::Standard,
         true,
-        false,
+        AddressLiteral::Reject,
     )
     .unwrap_or_else(|e| panic!("parse failed: {e}"));
     assert_eq!(p.display_name.map(|s| s.as_str(p.input)), Some("John Doe"));
@@ -144,7 +160,7 @@ fn quoted_display_name() {
         "\"John Doe\" <user@example.com>",
         Strictness::Standard,
         true,
-        false,
+        AddressLiteral::Reject,
     )
     .unwrap_or_else(|e| panic!("parse failed: {e}"));
     assert_eq!(p.display_name.map(|s| s.as_str(p.input)), Some("John Doe"));
@@ -154,8 +170,13 @@ fn quoted_display_name() {
 
 #[test]
 fn domain_literal_allowed() {
-    let p = parse("user@[192.168.1.1]", Strictness::Standard, false, true)
-        .unwrap_or_else(|e| panic!("parse failed: {e}"));
+    let p = parse(
+        "user@[192.168.1.1]",
+        Strictness::Standard,
+        false,
+        AddressLiteral::Routable,
+    )
+    .unwrap_or_else(|e| panic!("parse failed: {e}"));
     assert_eq!(p.domain.as_str(p.input), "[192.168.1.1]");
 }
 
@@ -187,7 +208,7 @@ fn strict_rejects_trailing_comment() {
         "user@example.com (comment)",
         Strictness::Strict,
         false,
-        false,
+        AddressLiteral::Reject,
     )
     .expect_err("Strict mode must reject trailing comment");
     assert!(matches!(e.kind(), ErrorKind::Unexpected { .. }));
@@ -200,7 +221,7 @@ fn strict_rejects_trailing_cfws_in_angle() {
         "<user@example.com (comment)>",
         Strictness::Strict,
         false,
-        false,
+        AddressLiteral::Reject,
     )
     .expect_err("Strict mode must reject CFWS before closing angle bracket");
     assert!(matches!(e.kind(), ErrorKind::Unexpected { .. }));
@@ -209,8 +230,13 @@ fn strict_rejects_trailing_cfws_in_angle() {
 #[test]
 fn strict_rejects_quoted_local_part() {
     // RFC 5321 Strict mode must reject quoted-string local parts.
-    let e = parse("\"quoted\"@example.com", Strictness::Strict, false, false)
-        .expect_err("Strict mode must reject quoted-string local part");
+    let e = parse(
+        "\"quoted\"@example.com",
+        Strictness::Strict,
+        false,
+        AddressLiteral::Reject,
+    )
+    .expect_err("Strict mode must reject quoted-string local part");
     assert_eq!(e.kind(), &ErrorKind::InvalidLocalPartChar { ch: '"' });
 }
 
@@ -221,7 +247,7 @@ fn strict_rejects_leading_comment() {
         "(comment)user@example.com",
         Strictness::Strict,
         false,
-        false,
+        AddressLiteral::Reject,
     )
     .expect_err("Strict mode must reject leading comment");
     // Leading `(` is not valid atext — parser reports the offending char.
@@ -231,8 +257,13 @@ fn strict_rejects_leading_comment() {
 #[test]
 fn standard_accepts_quoted_string_and_comments() {
     // Standard mode (RFC 5322) must accept quoted-string local parts.
-    let p = parse("\"quoted\"@example.com", Strictness::Standard, false, false)
-        .unwrap_or_else(|e| panic!("Standard must accept quoted-string: {e}"));
+    let p = parse(
+        "\"quoted\"@example.com",
+        Strictness::Standard,
+        false,
+        AddressLiteral::Reject,
+    )
+    .unwrap_or_else(|e| panic!("Standard must accept quoted-string: {e}"));
     assert_eq!(p.local_part.as_str(p.input), "\"quoted\"");
     assert_eq!(p.domain.as_str(p.input), "example.com");
 
@@ -241,7 +272,7 @@ fn standard_accepts_quoted_string_and_comments() {
         "user@example.com (comment)",
         Strictness::Standard,
         false,
-        false,
+        AddressLiteral::Reject,
     )
     .unwrap_or_else(|e| panic!("Standard must accept trailing comment: {e}"));
     assert_eq!(p.local_part.as_str(p.input), "user");
@@ -250,8 +281,13 @@ fn standard_accepts_quoted_string_and_comments() {
 
 #[test]
 fn domain_literal_rejected_by_default() {
-    let e = parse("user@[192.168.1.1]", Strictness::Standard, false, false)
-        .expect_err("expected error");
+    let e = parse(
+        "user@[192.168.1.1]",
+        Strictness::Standard,
+        false,
+        AddressLiteral::Reject,
+    )
+    .expect_err("expected error");
     assert_eq!(e.kind(), &ErrorKind::InvalidDomainChar { ch: '[' });
 }
 
@@ -340,7 +376,7 @@ fn obs_leading_comment_accepted_in_bare_addr_spec() {
         "(leading) user . name@example.com",
         Strictness::Lax,
         false,
-        false,
+        AddressLiteral::Reject,
     )
     .unwrap_or_else(|e| panic!("leading comment must be accepted: {e}"));
     assert_eq!(p.local_part_str(), "user.name");
@@ -401,8 +437,13 @@ fn obs_trailing_cfws_after_domain_preserves_zero_copy() {
 #[test]
 fn leading_comment_accepted_standard_and_lax() {
     for strictness in [Strictness::Standard, Strictness::Lax] {
-        let p = parse("(comment)jane.smith@example.com", strictness, false, false)
-            .unwrap_or_else(|e| panic!("{strictness:?}: leading comment must parse: {e}"));
+        let p = parse(
+            "(comment)jane.smith@example.com",
+            strictness,
+            false,
+            AddressLiteral::Reject,
+        )
+        .unwrap_or_else(|e| panic!("{strictness:?}: leading comment must parse: {e}"));
         assert_eq!(p.local_part_str(), "jane.smith");
         assert_eq!(p.domain_str(), "example.com");
     }
@@ -414,7 +455,7 @@ fn leading_comment_in_angle_addr() {
         "<(comment)user@example.com>",
         Strictness::Standard,
         false,
-        false,
+        AddressLiteral::Reject,
     )
     .unwrap_or_else(|e| panic!("leading comment in angle-addr must parse: {e}"));
     assert_eq!(p.local_part_str(), "user");
@@ -426,7 +467,7 @@ fn strict_still_rejects_leading_comment() {
         "(comment)user@example.com",
         Strictness::Strict,
         false,
-        false,
+        AddressLiteral::Reject,
     )
     .expect_err("Strict must reject leading comment");
     assert_eq!(e.kind(), &ErrorKind::InvalidLocalPartChar { ch: '(' });
@@ -434,8 +475,13 @@ fn strict_still_rejects_leading_comment() {
 
 #[test]
 fn comment_only_local_part_is_empty() {
-    let e = parse("(comment)@example.com", Strictness::Lax, false, false)
-        .expect_err("comment-only local part must be rejected");
+    let e = parse(
+        "(comment)@example.com",
+        Strictness::Lax,
+        false,
+        AddressLiteral::Reject,
+    )
+    .expect_err("comment-only local part must be rejected");
     assert_eq!(e.kind(), &ErrorKind::EmptyLocalPart);
 }
 
@@ -445,7 +491,7 @@ fn comment_only_local_part_is_empty() {
 fn rejects_bare_trailing_lf() {
     for input in ["test@iana.org\n", "test@iana.org\r", "test@iana.org\r\n"] {
         assert!(
-            parse(input, Strictness::Lax, false, false).is_err(),
+            parse(input, Strictness::Lax, false, AddressLiteral::Reject).is_err(),
             "must reject trailing bare CR/LF: {input:?}"
         );
     }
@@ -455,7 +501,7 @@ fn rejects_bare_trailing_lf() {
 fn rejects_bare_leading_cr_lf() {
     for input in ["\rtest@iana.org", "\ntest@iana.org", "\r\ntest@iana.org"] {
         assert!(
-            parse(input, Strictness::Lax, false, false).is_err(),
+            parse(input, Strictness::Lax, false, AddressLiteral::Reject).is_err(),
             "must reject leading bare CR/LF: {input:?}"
         );
     }
@@ -464,43 +510,79 @@ fn rejects_bare_leading_cr_lf() {
 #[test]
 fn rejects_bare_cr_in_comment() {
     // A bare CR inside a comment is not valid FWS.
-    let e = parse("test@iana.org(\r)", Strictness::Lax, false, false)
-        .expect_err("bare CR in comment must be rejected");
+    let e = parse(
+        "test@iana.org(\r)",
+        Strictness::Lax,
+        false,
+        AddressLiteral::Reject,
+    )
+    .expect_err("bare CR in comment must be rejected");
     assert!(matches!(e.kind(), ErrorKind::Unexpected { .. }));
 }
 
 #[test]
 fn comment_may_contain_folding_whitespace() {
     // A comment may fold across lines: CRLF + WSP is valid FWS inside it.
-    let p = parse("(a\r\n b)test@iana.org", Strictness::Lax, false, false)
-        .unwrap_or_else(|e| panic!("folded comment must parse: {e}"));
+    let p = parse(
+        "(a\r\n b)test@iana.org",
+        Strictness::Lax,
+        false,
+        AddressLiteral::Reject,
+    )
+    .unwrap_or_else(|e| panic!("folded comment must parse: {e}"));
     assert_eq!(p.local_part_str(), "test");
 }
 
 #[test]
 fn accepts_valid_folding_whitespace() {
     // FWS = CRLF followed by WSP — valid leading and trailing.
-    let leading = parse(" \r\n test@iana.org", Strictness::Lax, false, false)
-        .unwrap_or_else(|e| panic!("leading FWS must parse: {e}"));
+    let leading = parse(
+        " \r\n test@iana.org",
+        Strictness::Lax,
+        false,
+        AddressLiteral::Reject,
+    )
+    .unwrap_or_else(|e| panic!("leading FWS must parse: {e}"));
     assert_eq!(leading.local_part_str(), "test");
 
-    let trailing = parse("test@iana.org \r\n ", Strictness::Lax, false, false)
-        .unwrap_or_else(|e| panic!("trailing FWS must parse: {e}"));
+    let trailing = parse(
+        "test@iana.org \r\n ",
+        Strictness::Lax,
+        false,
+        AddressLiteral::Reject,
+    )
+    .unwrap_or_else(|e| panic!("trailing FWS must parse: {e}"));
     assert_eq!(trailing.domain_str(), "iana.org");
 }
 
 #[test]
 fn accepts_trailing_and_leading_space() {
     // Plain leading/trailing spaces are CFWS, accepted in Standard/Lax.
-    assert!(parse(" test@iana.org", Strictness::Standard, false, false).is_ok());
-    assert!(parse("test@iana.org ", Strictness::Standard, false, false).is_ok());
+    assert!(
+        parse(
+            " test@iana.org",
+            Strictness::Standard,
+            false,
+            AddressLiteral::Reject
+        )
+        .is_ok()
+    );
+    assert!(
+        parse(
+            "test@iana.org ",
+            Strictness::Standard,
+            false,
+            AddressLiteral::Reject
+        )
+        .is_ok()
+    );
 }
 
 // ── Address-literal validation (RFC 5321 §4.1.3) ──
 
 fn parse_lit(input: &str) -> Result<Parsed<'_>, Error> {
     // Domain literals require allow_domain_literal = true.
-    parse(input, Strictness::Lax, false, true)
+    parse(input, Strictness::Lax, false, AddressLiteral::Routable)
 }
 
 #[test]
@@ -550,7 +632,9 @@ fn parse_domain_literal_requires_open_bracket() {
     // (callers only invoke it after peeking '[').
     let mut parser = Parser::new("nope");
     assert_eq!(
-        parse_domain_literal(&mut parser).unwrap_err().kind(),
+        parse_domain_literal(&mut parser, AddressLiteral::Routable)
+            .unwrap_err()
+            .kind(),
         &ErrorKind::UnterminatedDomainLiteral
     );
 }
@@ -578,7 +662,7 @@ fn lax_accepts_obs_qtext_and_obs_qp() {
         "\"\\\u{0a}\"@iana.org", // obs-qp LF
     ] {
         assert!(
-            parse(input, Strictness::Lax, false, false).is_ok(),
+            parse(input, Strictness::Lax, false, AddressLiteral::Reject).is_ok(),
             "Lax must accept obs-qp/qtext: {input:?}"
         );
     }
@@ -587,8 +671,13 @@ fn lax_accepts_obs_qtext_and_obs_qp() {
 #[test]
 fn standard_rejects_obs_qtext() {
     // Standard (non-obsolete) mode must reject control chars in qtext.
-    let e = parse("\"\u{07}\"@iana.org", Strictness::Standard, false, false)
-        .expect_err("Standard must reject obs-qtext");
+    let e = parse(
+        "\"\u{07}\"@iana.org",
+        Strictness::Standard,
+        false,
+        AddressLiteral::Reject,
+    )
+    .expect_err("Standard must reject obs-qtext");
     assert_eq!(e.kind(), &ErrorKind::InvalidLocalPartChar { ch: '\u{07}' });
 }
 
@@ -600,12 +689,20 @@ fn rejects_quoted_pair_of_non_ascii() {
         "\"test\\\u{a9}\"@iana.org",
         Strictness::Standard,
         false,
-        false,
+        AddressLiteral::Reject,
     )
     .expect_err("quoted-pair of non-ASCII must be rejected");
     assert_eq!(e.kind(), &ErrorKind::InvalidQuotedPair);
     // Lax also rejects it (after backtracking the obs-local-part attempt).
-    assert!(parse("\"test\\\u{a9}\"@iana.org", Strictness::Lax, false, false).is_err());
+    assert!(
+        parse(
+            "\"test\\\u{a9}\"@iana.org",
+            Strictness::Lax,
+            false,
+            AddressLiteral::Reject
+        )
+        .is_err()
+    );
 }
 
 // ── FWS / recursion / quoted-string edge paths ──
@@ -613,8 +710,13 @@ fn rejects_quoted_pair_of_non_ascii() {
 #[test]
 fn quoted_string_consumes_consecutive_wsp() {
     // Two spaces in a row exercise the multi-WSP loop in try_eat_fws.
-    let p = parse("\"a  b\"@example.com", Strictness::Standard, false, false)
-        .unwrap_or_else(|e| panic!("quoted string with double space: {e}"));
+    let p = parse(
+        "\"a  b\"@example.com",
+        Strictness::Standard,
+        false,
+        AddressLiteral::Reject,
+    )
+    .unwrap_or_else(|e| panic!("quoted string with double space: {e}"));
     assert_eq!(p.local_part.as_str(p.input), "\"a  b\"");
 }
 
@@ -636,7 +738,7 @@ fn deeply_nested_comment_is_rejected() {
         "(".repeat(MAX_RECURSION_DEPTH + 2),
         ")".repeat(MAX_RECURSION_DEPTH + 2)
     );
-    assert!(parse(&input, Strictness::Lax, false, false).is_err());
+    assert!(parse(&input, Strictness::Lax, false, AddressLiteral::Reject).is_err());
 }
 
 // ── Display-name parsing paths (allow_display_name = true) ──
@@ -645,8 +747,13 @@ fn deeply_nested_comment_is_rejected() {
 fn quoted_local_part_not_treated_as_display_name() {
     // A quoted string with no following '<' is the local-part, not a
     // display name — try_parse_display_name backtracks.
-    let p = parse("\"quoted\"@example.com", Strictness::Standard, true, false)
-        .unwrap_or_else(|e| panic!("quoted local with display_name enabled: {e}"));
+    let p = parse(
+        "\"quoted\"@example.com",
+        Strictness::Standard,
+        true,
+        AddressLiteral::Reject,
+    )
+    .unwrap_or_else(|e| panic!("quoted local with display_name enabled: {e}"));
     assert_eq!(p.display_name, None);
     assert_eq!(p.local_part.as_str(p.input), "\"quoted\"");
 }
@@ -659,7 +766,7 @@ fn malformed_quoted_display_name_backtracks() {
         "\"unterminated@example.com",
         Strictness::Standard,
         true,
-        false,
+        AddressLiteral::Reject,
     )
     .expect_err("unterminated quoted must fail");
     assert_eq!(e.kind(), &ErrorKind::UnterminatedQuotedString);
@@ -669,8 +776,13 @@ fn malformed_quoted_display_name_backtracks() {
 fn control_char_aborts_display_name_scan() {
     // A control character aborts the unquoted display-name scan; parsing
     // then falls back to addr-spec and rejects the control char.
-    let e = parse("\u{01}user@example.com", Strictness::Standard, true, false)
-        .expect_err("control char must be rejected");
+    let e = parse(
+        "\u{01}user@example.com",
+        Strictness::Standard,
+        true,
+        AddressLiteral::Reject,
+    )
+    .expect_err("control char must be rejected");
     assert_eq!(e.kind(), &ErrorKind::InvalidLocalPartChar { ch: '\u{01}' });
 }
 
@@ -678,8 +790,13 @@ fn control_char_aborts_display_name_scan() {
 fn unquoted_text_without_angle_is_not_display_name() {
     // Unquoted text reaching end-of-input with no '<' is not a display
     // name; it is parsed as an addr-spec, which here lacks '@'.
-    let e = parse("plainname", Strictness::Standard, true, false)
-        .expect_err("bare text without '@' must fail");
+    let e = parse(
+        "plainname",
+        Strictness::Standard,
+        true,
+        AddressLiteral::Reject,
+    )
+    .expect_err("bare text without '@' must fail");
     assert_eq!(e.kind(), &ErrorKind::MissingAtSign);
 }
 
@@ -692,7 +809,7 @@ fn leading_cfws_before_quoted_display_name() {
         " \"John Doe\" <user@example.com>",
         Strictness::Standard,
         true,
-        false,
+        AddressLiteral::Reject,
     )
     .unwrap_or_else(|e| panic!("leading CFWS + quoted display name: {e}"));
     assert_eq!(p.display_name.map(|s| s.as_str(p.input)), Some("John Doe"));
@@ -709,8 +826,46 @@ fn ipv6_address_literal_tag_is_case_insensitive() {
         "user@[IPv6:::1]",
     ] {
         assert!(
-            parse(input, Strictness::Lax, false, true).is_ok(),
+            parse(input, Strictness::Lax, false, AddressLiteral::Routable).is_ok(),
             "case-insensitive IPv6 tag must parse: {input}"
         );
     }
+}
+
+#[test]
+fn reject_admits_no_literal_at_all() {
+    // `parse_domain` refuses the '[' before reaching here, so this arm is only
+    // reachable directly. It still has to answer, because the predicate is what
+    // decides whether any literal is a literal.
+    for content in ["192.168.1.1", "IPv6:::1", "TAG:x"] {
+        assert!(
+            !is_address_literal(content, AddressLiteral::Reject),
+            "{content}"
+        );
+    }
+}
+
+#[test]
+fn an_over_long_ipv6_literal_is_rejected_not_truncated() {
+    // Depadding an IPv6v4 tail rewrites the address into a fixed stack buffer
+    // sized for the longest address the grammar can produce. A literal longer
+    // than that must be refused: silently truncating it would hand `Ipv6Addr` a
+    // different address than the one written.
+    let long_head = "1".repeat(MAX_IPV6_ADDR_LEN * 2);
+    let content = alloc::format!("IPv6:{long_head}:012.0.2.1");
+    assert!(!is_address_literal(&content, AddressLiteral::Rfc5321));
+
+    // Overflow can also arrive part-way through the tail, once the head has
+    // already been written: a head that fits alone but not beside the octets it
+    // precedes must be refused just the same.
+    let head = "1".repeat(MAX_IPV6_ADDR_LEN - 8);
+    let mid_tail = alloc::format!("IPv6:{head}:012.0.2.1");
+    assert!(!is_address_literal(&mid_tail, AddressLiteral::Rfc5321));
+
+    // The same shape inside the buffer's reach still parses or fails on its own
+    // merits rather than on length.
+    assert!(is_address_literal(
+        "IPv6:::ffff:012.0.2.1",
+        AddressLiteral::Rfc5321
+    ));
 }

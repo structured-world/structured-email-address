@@ -43,6 +43,55 @@ pub enum CasePolicy {
     Preserve,
 }
 
+/// Which `address-literal` spellings the domain may take (RFC 5321 §4.1.3).
+///
+/// The grammar names three alternatives:
+///
+/// ```text
+/// address-literal = "[" ( IPv4-address-literal /
+///                         IPv6-address-literal /
+///                         General-address-literal ) "]"
+/// ```
+///
+/// A domain literal is refused unless asked for, so the default is
+/// [`Reject`](Self::Reject). Of the two readings a caller can opt into, the
+/// destination-oriented one, [`Routable`](Self::Routable), covers the first two
+/// alternatives, which are the only ones mail can be delivered to. A reader of
+/// an identity rather than a destination needs the third:
+/// an X.509 `rfc822Name` is a `Mailbox` as RFC 5321 defines it (RFC 5280
+/// §4.2.1.6), and refusing a spelling the grammar names makes the certificate
+/// carrying it unreadable rather than merely unroutable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AddressLiteral {
+    /// Reject every `[...]` domain literal.
+    #[default]
+    Reject,
+    /// Accept only a literal naming a routable destination: an IPv4 dotted-quad
+    /// or an `IPv6:`-tagged IPv6 address.
+    ///
+    /// Stricter than the grammar in one place, deliberately: RFC 5321 `Snum` is
+    /// `1*3DIGIT` in the range 0..=255 with no rule against padding, so
+    /// `[012.0.2.1]` is inside the grammar. It is rejected here because a
+    /// zero-padded octet is read as octal by some resolvers, and a destination
+    /// that resolves two ways is not one. Use [`Rfc5321`](Self::Rfc5321) to read
+    /// the grammar as written.
+    Routable,
+    /// Accept every alternative the grammar names, `General-address-literal`
+    /// included, so `postmaster@[AS400:QSYS]` parses.
+    ///
+    /// ```text
+    /// General-address-literal = Standardized-tag ":" 1*dcontent
+    /// Standardized-tag        = Ldh-str
+    /// dcontent                = %d33-90 / %d94-126
+    /// ```
+    ///
+    /// The `IPv6` tag keeps its own alternative's meaning: RFC 5321 §4.1.3
+    /// requires a standardized tag to be defined by a Standards-Track RFC, and
+    /// IPv6 is, so `[IPv6:...]` must still hold an IPv6 address and is not
+    /// reinterpreted as free `dcontent`.
+    Rfc5321,
+}
+
 /// How to validate the domain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DomainCheck {
@@ -94,7 +143,7 @@ pub struct Config {
     pub(crate) subaddress: SubaddressPolicy,
     pub(crate) subaddress_separator: char,
     pub(crate) check_confusables: bool,
-    pub(crate) allow_domain_literal: bool,
+    pub(crate) address_literal: AddressLiteral,
     pub(crate) allow_display_name: bool,
     pub(crate) require_tld_dot: bool,
     /// When true, a matched provider rule's dot/case/separator override the
@@ -115,7 +164,7 @@ impl Default for Config {
             subaddress: SubaddressPolicy::Preserve,
             subaddress_separator: '+',
             check_confusables: false,
-            allow_domain_literal: false,
+            address_literal: AddressLiteral::Reject,
             allow_display_name: false,
             require_tld_dot: true,
             provider_aware: false,
@@ -213,9 +262,32 @@ impl ConfigBuilder {
         self
     }
 
-    /// Allow domain literals like `[192.168.1.1]`.
+    /// Allow domain literals that name a routable destination, like
+    /// `[192.168.1.1]` or `[IPv6:::1]`.
+    ///
+    /// See [`AddressLiteral::Routable`] for the one place this reads the RFC
+    /// 5321 grammar more strictly than it is written.
     pub fn allow_domain_literal(mut self) -> Self {
-        self.0.allow_domain_literal = true;
+        self.0.address_literal = AddressLiteral::Routable;
+        self
+    }
+
+    /// Allow every `address-literal` RFC 5321 §4.1.3 names, including
+    /// `General-address-literal`.
+    ///
+    /// Use this to read an address out of a document rather than to route mail
+    /// to it: `postmaster@[AS400:QSYS]` is a `Mailbox` by the grammar, and an
+    /// X.509 `rfc822Name` may hold one (RFC 5280 §4.2.1.6).
+    ///
+    /// ```
+    /// use structured_email_address::{Config, EmailAddress};
+    ///
+    /// let config = Config::builder().allow_address_literal_rfc5321().build();
+    /// let email = EmailAddress::parse_with("postmaster@[AS400:QSYS]", &config).unwrap();
+    /// assert_eq!(email.domain(), "[AS400:QSYS]");
+    /// ```
+    pub fn allow_address_literal_rfc5321(mut self) -> Self {
+        self.0.address_literal = AddressLiteral::Rfc5321;
         self
     }
 

@@ -1,5 +1,7 @@
 //! Post-parse validation: length limits, domain checks, TLD validation.
 
+use alloc::string::ToString;
+
 use crate::config::{Config, DomainCheck};
 use crate::error::{Error, ErrorKind};
 use crate::normalize::Normalized;

@@ -10,6 +10,9 @@
 //!
 //! [`EmailAddress::is_freemail`]: crate::EmailAddress::is_freemail
 
+use alloc::borrow::Cow;
+use alloc::string::String;
+
 /// Normalization rule for one mail provider (a set of equivalent domains).
 ///
 /// Construct with [`ProviderRule::new`] and refine with the builder-style
@@ -30,7 +33,10 @@
 /// ```
 #[derive(Debug, Clone)]
 pub struct ProviderRule {
-    domains: Vec<Box<str>>,
+    /// Borrowed for the built-in rules, which are static data, and owned for a
+    /// rule a caller builds. Keeping both in one type lets the built-in registry
+    /// be a `static` rather than something initialized at first use.
+    domains: Cow<'static, [Cow<'static, str>]>,
     strip_dots: bool,
     lowercase_local: bool,
     subaddress_sep: Option<char>,
@@ -53,10 +59,12 @@ impl ProviderRule {
         S: Into<String>,
     {
         Self {
-            domains: domains
-                .into_iter()
-                .map(|d| canonical_domain(&d.into()))
-                .collect(),
+            domains: Cow::Owned(
+                domains
+                    .into_iter()
+                    .map(|d| Cow::Owned(canonical_domain(&d.into())))
+                    .collect(),
+            ),
             strip_dots: false,
             lowercase_local: false,
             subaddress_sep: Some('+'),
@@ -134,29 +142,52 @@ impl ProviderRule {
 /// built-ins, so a custom rule can redefine a built-in provider.
 #[derive(Debug, Clone)]
 pub struct ProviderRegistry {
-    rules: Vec<ProviderRule>,
+    rules: Cow<'static, [ProviderRule]>,
 }
 
-// Process-wide built-in registry, constructed once. `builtin()` clones it and
-// the GmailOnly dot-policy borrows it, so neither pays a per-call allocation.
-// no-std: once_cell::race::OnceBox (alloc) or a caller-injected registry.
-static BUILTIN: std::sync::LazyLock<ProviderRegistry> = std::sync::LazyLock::new(|| {
-    let p = |domains: &[&str]| {
-        ProviderRule::new(domains.iter().copied())
-            .lowercase_local(true)
-            .freemail(true)
+/// Spell a built-in domain list, which is static data.
+macro_rules! domains {
+    ($($d:literal),+ $(,)?) => {
+        &[$(Cow::Borrowed($d)),+]
     };
-    ProviderRegistry {
-        rules: vec![
-            p(&["gmail.com", "googlemail.com"]).strip_dots(true),
-            p(&["outlook.com", "hotmail.com", "live.com", "msn.com"]),
-            p(&["yahoo.com", "yahoo.co.uk", "yahoo.co.jp"]),
-            p(&["protonmail.com", "proton.me"]),
-            p(&["icloud.com", "me.com", "mac.com"]),
-            p(&["yandex.ru", "yandex.com"]),
-            p(&["mail.ru"]),
-            // Freemail providers without special normalization quirks.
-            p(&[
+}
+
+/// One built-in provider. Every built-in folds local-part case, uses `+` as its
+/// subaddress separator and is freemail; only the dot policy varies.
+///
+/// The domains skip [`canonical_domain`] because they are already written in
+/// canonical form: lowercase ASCII with no IDN label to punycode.
+const fn builtin(domains: &'static [Cow<'static, str>], strip_dots: bool) -> ProviderRule {
+    ProviderRule {
+        domains: Cow::Borrowed(domains),
+        strip_dots,
+        lowercase_local: true,
+        subaddress_sep: Some('+'),
+        is_freemail: true,
+    }
+}
+
+// The built-in registry is static data, so it is a `static` and not something
+// built at first use. That costs no allocation, no lazy-initialization branch
+// and, unlike a `OnceLock`/`OnceBox`, no pointer-width atomic: bare-metal
+// targets without a compare-and-swap (thumbv6m, riscv32i) can build the crate.
+// `builtin()` clones it and the GmailOnly dot-policy borrows it, and cloning a
+// borrowed Cow copies nothing.
+static BUILTIN: ProviderRegistry = ProviderRegistry {
+    rules: Cow::Borrowed(&[
+        builtin(domains!["gmail.com", "googlemail.com"], true),
+        builtin(
+            domains!["outlook.com", "hotmail.com", "live.com", "msn.com"],
+            false,
+        ),
+        builtin(domains!["yahoo.com", "yahoo.co.uk", "yahoo.co.jp"], false),
+        builtin(domains!["protonmail.com", "proton.me"], false),
+        builtin(domains!["icloud.com", "me.com", "mac.com"], false),
+        builtin(domains!["yandex.ru", "yandex.com"], false),
+        builtin(domains!["mail.ru"], false),
+        // Freemail providers without special normalization quirks.
+        builtin(
+            domains![
                 "aol.com",
                 "mail.com",
                 "zoho.com",
@@ -166,10 +197,11 @@ static BUILTIN: std::sync::LazyLock<ProviderRegistry> = std::sync::LazyLock::new
                 "tutanota.com",
                 "tuta.io",
                 "fastmail.com",
-            ]),
-        ],
-    }
-});
+            ],
+            false,
+        ),
+    ]),
+};
 
 /// Borrow the process-wide built-in registry without allocating.
 pub(crate) fn builtin_ref() -> &'static ProviderRegistry {
@@ -179,7 +211,9 @@ pub(crate) fn builtin_ref() -> &'static ProviderRegistry {
 impl ProviderRegistry {
     /// An empty registry.
     pub fn empty() -> Self {
-        Self { rules: Vec::new() }
+        Self {
+            rules: Cow::Borrowed(&[]),
+        }
     }
 
     /// The built-in registry of well-known mail providers.
@@ -194,8 +228,10 @@ impl ProviderRegistry {
     }
 
     /// Add a rule. User-added rules take precedence over earlier ones.
+    /// Adding to a registry still borrowing the built-ins copies them once,
+    /// here, rather than on every `builtin()` call.
     pub fn add(&mut self, rule: ProviderRule) {
-        self.rules.push(rule);
+        self.rules.to_mut().push(rule);
     }
 
     /// Builder-style [`add`](Self::add).
@@ -229,10 +265,8 @@ impl Default for ProviderRegistry {
 ///
 /// Falls back to ASCII lowercasing if the input is not a valid domain, so
 /// matching never panics on arbitrary registry input.
-fn canonical_domain(domain: &str) -> Box<str> {
-    idna::domain_to_ascii(domain)
-        .unwrap_or_else(|_| domain.to_ascii_lowercase())
-        .into_boxed_str()
+fn canonical_domain(domain: &str) -> String {
+    idna::domain_to_ascii(domain).unwrap_or_else(|_| domain.to_ascii_lowercase())
 }
 
 #[cfg(test)]

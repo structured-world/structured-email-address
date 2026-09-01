@@ -160,14 +160,34 @@ Rayon gives ~5x speedup on this workload.
 
 | Feature | Default | Description |
 |---------|---------|-------------|
+| `std` | Yes | Operating-system integration in dependencies. Turn it off for `no_std` |
+| `alloc` | Yes (via `std`) | Names the `core` + `alloc` build. An allocator is required either way |
 | `serde` | Yes | Serialize/deserialize as canonical string |
-| `psl` | Yes | Domain validation against Public Suffix List |
-| `rayon` | No | Parallel batch parsing via `parse_batch_par()` |
+| `psl` | Yes | Domain validation against Public Suffix List. Implies `std` until `structured-public-domains` ships its own no-std build |
+| `rayon` | No | Parallel batch parsing via `parse_batch_par()` (implies `std`) |
 
 ```toml
 # Minimal (no serde, no PSL)
-structured-email-address = { version = "0.0.1", default-features = false }
+structured-email-address = { version = "0.0.16", default-features = false }
 ```
+
+### `no_std`
+
+The parser and validator build against `core` + `alloc`, so they run in a WASM
+sandbox or on bare metal. Nothing here needs a pointer-width atomic either, so
+the crate builds on targets without compare-and-swap. CI checks both
+`thumbv7em-none-eabihf` and `thumbv6m-none-eabi`, because a host check cannot
+fail on a constraint the host does not have: `std` is present there, so code
+reaching for it still compiles, and the host has the atomics `thumbv6m` lacks.
+
+```toml
+structured-email-address = { version = "0.0.16", default-features = false, features = ["alloc"] }
+```
+
+An allocator is not optional: every parse produces owned strings. The `psl`
+feature declares `std` as a requirement, since `structured-public-domains` has
+not made the same move yet; a no-std build therefore leaves PSL validation out
+and keeps the rest.
 
 ## Anti-Homoglyph Protection
 

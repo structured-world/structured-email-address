@@ -1,6 +1,6 @@
 [package]
 name = "structured-email-address"
-version = "0.0.16"
+version = "0.0.17"
 edition = "2024"
 rust-version = "1.92"
 authors = ["Structured World Foundation <foundation@sw.foundation>"]
@@ -13,17 +13,36 @@ keywords = ["email", "email-address", "validation", "rfc-5322", "normalization"]
 categories = ["parser-implementations", "text-processing"]
 
 [features]
-default = ["serde", "psl"]
-serde = ["dep:serde"]
-psl = ["dep:structured-public-domains"]
-rayon = ["dep:rayon"]
+default = ["std", "serde", "psl"]
+# The crate is written against `core` + `alloc`; an allocator is not optional,
+# since every parse produces owned strings. This feature carries no code of its
+# own and exists so a no-std consumer can name the shape it is asking for.
+alloc = []
+# Everything that genuinely needs an operating system: `std::error::Error`
+# integration in dependencies, and rayon's thread pool.
+std = ["alloc", "idna/std", "unicode-normalization/std", "serde?/std"]
+# `serde/alloc`, not just the dependency: the impls here serialize `String`, and
+# serde only provides its `String` impls behind `alloc` or `std`. Without this
+# the advertised `alloc,serde` combination does not compile.
+serde = ["dep:serde", "serde/alloc", "alloc"]
+# Implies `std` because the published structured-public-domains still does.
+# Without this a consumer can select `alloc,psl` and get a missing-`std` error
+# from inside a dependency instead of a configuration this crate supports.
+# Relaxable once that crate ships its own no-std build: see #77.
+psl = ["dep:structured-public-domains", "std"]
+rayon = ["dep:rayon", "std"]
 
 [dependencies]
-idna = "1.1"
+idna = { version = "1.1", default-features = false, features = [
+    "alloc",
+    "compiled_data",
+] }
 structured-public-domains = { version = "0", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
-unicode-normalization = "0.1"
-unicode-security = "0.1"
+serde = { version = "1", default-features = false, features = [
+    "derive",
+], optional = true }
+unicode-normalization = { version = "0.1", default-features = false }
+unicode-security = { version = "0.1", default-features = false }
 rayon = { version = "1", optional = true }
 
 [dev-dependencies]

@@ -3,12 +3,15 @@
 //! Converts parsed email addresses to canonical form based on [`Config`] settings.
 //! Adapted from StructuredID's `sid-authn/normalize.rs` with generalized provider support.
 
+use alloc::borrow::Cow;
+use alloc::format;
+use alloc::string::{String, ToString};
 use unicode_normalization::UnicodeNormalization;
 use unicode_security::confusable_detection::skeleton;
 
 use crate::config::{CasePolicy, Config, DotPolicy, SubaddressPolicy};
 use crate::error::{Error, ErrorKind};
-use crate::parser::Parsed;
+use crate::parser::{self, Parsed};
 
 /// Result of normalization: owned canonical parts.
 #[derive(Debug, Clone)]
@@ -35,22 +38,50 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normaliz
     let is_quoted = local.starts_with('"') && local.ends_with('"');
 
     // Strip quotes and unescape RFC quoted-pairs from quoted-string local parts.
-    let unquoted_local = if is_quoted {
-        unescape_quoted_string(&local[1..local.len() - 1])
+    // An unquoted local part is already its own semantic value, so it is lent
+    // rather than copied: the copy would only be read by the NFC step below and
+    // dropped.
+    let unquoted_local: Cow<'_, str> = if is_quoted {
+        Cow::Owned(unescape_quoted_string(&local[1..local.len() - 1]))
     } else {
-        local.to_string()
+        Cow::Borrowed(local)
     };
 
-    // Step 1: Unicode NFC normalization.
-    let nfc_local: String = unquoted_local.nfc().collect();
-    let nfc_domain: String = domain_str.nfc().collect();
+    // Step 1: Unicode NFC normalization. Text already in NFC is the common case
+    // (every all-ASCII address is), and for it `nfc().collect()` would build a
+    // byte-identical copy, so the quick check earns its scan back.
+    let nfc_local: String = if unicode_normalization::is_nfc(&unquoted_local) {
+        unquoted_local.into_owned()
+    } else {
+        unquoted_local.nfc().collect()
+    };
+    let nfc_domain: Cow<'_, str> = if unicode_normalization::is_nfc(domain_str) {
+        Cow::Borrowed(domain_str)
+    } else {
+        Cow::Owned(domain_str.nfc().collect())
+    };
 
     // Canonical (IDNA-ASCII) domain — computed up front so provider lookup,
     // freemail detection (in parse_with), and the final domain all use the SAME
-    // form. Domain literals ([192.168.1.1]) are IPs, not hostnames — skip IDNA.
+    // form. Domain literals are not hostnames, so they skip IDNA; whether they
+    // also fold case depends on which literal it is. An IP literal carries no
+    // case in either part — the `IPv6:` tag is an ABNF string literal (RFC 5234
+    // §2.3) and IPv6 hex digits are case-insensitive (RFC 4291 §2.2) — so it is
+    // folded, keeping two spellings of one address equal under comparison and
+    // hashing. A General-address-literal is not: its body is opaque to SMTP and
+    // meaningful to the receiving system, so folding `[AS400:QSYS]` would hand
+    // that system a different address (RFC 5321 §4.1.3).
     // Strict mode: STD3 ASCII deny-list, hyphen checks, DNS length verification.
     let canonical_domain = if nfc_domain.starts_with('[') {
-        nfc_domain.to_lowercase()
+        let inner = nfc_domain
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+            .unwrap_or(&nfc_domain);
+        if parser::is_ip_address_literal(inner) {
+            nfc_domain.to_lowercase()
+        } else {
+            nfc_domain.into_owned()
+        }
     } else {
         idna::domain_to_ascii_strict(&nfc_domain).map_err(|e| {
             Error::new(
