@@ -18,9 +18,9 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
-  # Only what GITHUB_TOKEN needs: `dependabot/fetch-metadata` reads the pull
-  # request. Approving and merging are done with the App token below, so nothing
-  # here needs write access to the repository contents.
+  # Only what the default token needs: `dependabot/fetch-metadata` reads the
+  # pull request. Approving, disarming and merging are done with the App token
+  # below, so nothing here needs write access to the repository contents.
   pull-requests: read
 
 # One run per pull request, and a new push cancels the run it superseded rather
@@ -32,18 +32,10 @@ concurrency:
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
-    # Both the author and the actor, not just the author. `synchronize` fires
-    # for any push to the pull request's branch, and the author stays
-    # dependabot[bot] no matter who pushed — so checking the author alone lets a
-    # maintainer add commits to an open Dependabot PR and have this job approve
-    # and auto-merge them with the App token, which is precisely the independent
-    # review that approval is supposed to represent.
-    # `triggering_actor` as well as `actor`: on a rerun the latter keeps the
-    # original run's value, so only the former shows who asked for this one.
-    if: >-
-      github.event.pull_request.user.login == 'dependabot[bot]'
-      && github.actor == 'dependabot[bot]'
-      && github.triggering_actor == 'dependabot[bot]'
+    # Only the author here. Who triggered the run decides what the job does, not
+    # whether it runs at all: a push by anyone else is the case that has to be
+    # handled, and a job that skips it cannot handle anything.
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
 
     steps:
       # Pinned to commit SHAs, not tags, because `pull_request_target` puts the
@@ -51,20 +43,71 @@ jobs:
       # a mutable tag would be enough to take it. Dependabot updates a pinned
       # SHA the same way it updates a tag, so this costs nothing to maintain.
       # Repository-wide pinning is tracked separately in #78.
-      - name: Dependabot metadata
-        id: metadata
-        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.1
-        with:
-          github-token: "${{ secrets.GITHUB_TOKEN }}"
-
       - name: Generate App Token
         id: app-token
-        if: steps.metadata.outputs.update-type == 'version-update:semver-minor' || steps.metadata.outputs.update-type == 'version-update:semver-patch'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ secrets.RELEASER_APP_ID }}
           private-key: ${{ secrets.RELEASER_APP_PRIVATE_KEY }}
 
+      # Auto-merge, once enabled, outlives the head it was enabled for. GitHub
+      # turns it off by itself only when the pusher lacks write access, so a
+      # maintainer adding commits to an open Dependabot pull request leaves it
+      # armed, and it then merges those commits. `--match-head-commit` does not
+      # cover this: it is a precondition checked when the command runs, not a
+      # standing binding to that SHA.
+      #
+      # So the run a foreign push triggers disarms rather than skips. The
+      # approval is left to the repository's stale-review dismissal, which is
+      # the setting that exists for it.
+      #
+      # `triggering_actor` as well as `actor`: on a rerun the latter keeps the
+      # original run's value, so only the former shows who asked for this one.
+      #
+      # A push made with a token that does not trigger workflows raises no
+      # `synchronize` event and so reaches nothing here. That is a property of
+      # the event, not something this job can close.
+      - name: Disarm auto-merge when someone else moved the head
+        if: >-
+          github.actor != 'dependabot[bot]'
+          || github.triggering_actor != 'dependabot[bot]'
+        # Asked rather than assumed: disabling auto-merge that was never enabled
+        # is an error, and swallowing errors here would also swallow the one
+        # that says the disarm failed.
+        #
+        # Every value the script reads arrives through the environment. An
+        # expression interpolated into `run:` is expanded before the shell sees
+        # the line, so its contents become script rather than data.
+        run: |
+          armed=$(gh pr view "$PR_NUMBER" --json autoMergeRequest \
+            --jq '.autoMergeRequest != null')
+          if [ "$armed" = "true" ]; then
+            gh pr merge --disable-auto "$PR_NUMBER"
+            echo "auto-merge disarmed: the head moved under a push by $PUSHER"
+          else
+            echo "auto-merge was not armed; nothing to disarm"
+          fi
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PUSHER: ${{ github.triggering_actor }}
+
+      # No token passed: the action's `github-token` already defaults to
+      # `github.token`, which the permissions block above scopes to reading the
+      # pull request. Naming it again would only restate the default, and the
+      # App token is deliberately not used here — this step reads, and reading
+      # is not a reason to hold a credential that can write.
+      - name: Dependabot metadata
+        id: metadata
+        if: >-
+          github.actor == 'dependabot[bot]'
+          && github.triggering_actor == 'dependabot[bot]'
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.1
+
+      # The metadata step is skipped for a foreign push, so its outputs are
+      # empty there and this condition is false: approval happens only on a run
+      # Dependabot itself triggered.
       - name: Approve and enable auto-merge for minor/patch updates
         if: steps.metadata.outputs.update-type == 'version-update:semver-minor' || steps.metadata.outputs.update-type == 'version-update:semver-patch'
         # Both operations name the head this run actually inspected, rather than
