@@ -68,16 +68,39 @@ jobs:
       # approval is left to the repository's stale-review dismissal, which is
       # the setting that exists for it.
       #
-      # `triggering_actor` as well as `actor`: on a rerun the latter keeps the
-      # original run's value, so only the former shows who asked for this one.
+      # A rerun is not a push, and this is where the two must not be confused.
+      # Rerunning a Dependabot run leaves `actor` as dependabot and makes
+      # `triggering_actor` whoever asked — the same shape a foreign push has,
+      # except that nothing moved. Comparing the head does not tell them apart
+      # either, since a rerun has the head it always had. So the attempt number
+      # is what separates them: only a first attempt is a real event, and only a
+      # real event can have moved anything. Without that, a maintainer rerunning
+      # checks would disarm the auto-merge Dependabot armed, with the metadata
+      # step skipped and so nothing to arm it again, and the pull request would
+      # sit there.
+      #
+      # The approval step keeps reading both actors, because there the rerunner
+      # is exactly who it needs to know about.
       #
       # A push made with a token that does not trigger workflows raises no
       # `synchronize` event and so reaches nothing here. That is a property of
       # the event, not something this job can close.
       - name: Disarm auto-merge when someone else moved the head
         if: >-
-          github.actor != 'dependabot[bot]'
-          || github.triggering_actor != 'dependabot[bot]'
+          github.run_attempt == 1
+          && (github.actor != 'dependabot[bot]'
+              || github.triggering_actor != 'dependabot[bot]')
+        # The head is checked because disarming has no precondition of its own:
+        # `--match-head-commit` maps to `expectedHeadOid`, which the mutation
+        # behind `--disable-auto` does not take. Without the check, a slow run
+        # from one push can disable the auto-merge a later Dependabot run
+        # legitimately armed, and the pull request then sits unmerged with
+        # nothing saying why. The concurrency group above cancels the older run,
+        # but cancellation is not instant, so the window is narrow rather than
+        # closed. Reading the head narrows it to these two calls; closing it
+        # would need a precondition the API does not offer, and the failure left
+        # over is a merge that does not happen, not one that should not.
+        #
         # Asked rather than assumed: disabling auto-merge that was never enabled
         # is an error, and swallowing errors here would also swallow the one
         # that says the disarm failed.
@@ -86,9 +109,14 @@ jobs:
         # expression interpolated into `run:` is expanded before the shell sees
         # the line, so its contents become script rather than data.
         run: |
-          armed=$(gh pr view "$PR_NUMBER" --json autoMergeRequest \
-            --jq '.autoMergeRequest != null')
-          if [ "$armed" = "true" ]; then
+          state=$(gh pr view "$PR_NUMBER" --json autoMergeRequest,headRefOid \
+            --jq '"\(.autoMergeRequest != null) \(.headRefOid)"')
+          armed=${state%% *}
+          current=${state##* }
+          if [ "$current" != "$HEAD_SHA" ]; then
+            echo "head is now $current, not the $HEAD_SHA this run saw;"
+            echo "a later run owns this pull request, leaving its state alone"
+          elif [ "$armed" = "true" ]; then
             gh pr merge --disable-auto "$PR_NUMBER"
             echo "auto-merge disarmed: the head moved under a push by $PUSHER"
           else
@@ -99,6 +127,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PUSHER: ${{ github.triggering_actor }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 
       # No token passed: the action's `github-token` already defaults to
       # `github.token`, which the permissions block above scopes to reading the
