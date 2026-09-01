@@ -367,6 +367,55 @@ fn batch_parse_with_config() {
     );
 }
 
+// ── domain_scope() accessor ──
+
+#[test]
+fn domain_scope_reads_the_address_that_parsed() {
+    // The accessor over the whole pipeline, rather than over a domain string:
+    // what it classifies is the canonical domain, so an IDN name and a literal
+    // both arrive here in the form the parse settled on.
+    let config = Config::builder()
+        .allow_single_label_domain()
+        .allow_address_literal_rfc5321()
+        .build();
+    let scope = |input: &str| {
+        EmailAddress::parse_with(input, &config)
+            .unwrap_or_else(|e| panic!("{input} must parse: {e}"))
+            .domain_scope()
+    };
+
+    assert_eq!(scope("a@example.com"), DomainScope::Global);
+    assert_eq!(scope("a@münchen.de"), DomainScope::Global);
+    assert_eq!(scope("admin@printer"), DomainScope::Local);
+    assert_eq!(scope("a@host.local"), DomainScope::Local);
+    assert_eq!(
+        scope("a@[192.168.1.5]"),
+        DomainScope::Literal(LiteralScope::Ipv4(IpScope::Local))
+    );
+    assert_eq!(
+        scope("a@[IPv6:fd00::1]"),
+        DomainScope::Literal(LiteralScope::Ipv6(IpScope::Local))
+    );
+    assert_eq!(
+        scope("a@[192.0.2.1]"),
+        DomainScope::Literal(LiteralScope::Ipv4(IpScope::Global))
+    );
+    assert_eq!(
+        scope("postmaster@[AS400:QSYS]"),
+        DomainScope::Literal(LiteralScope::General)
+    );
+}
+
+#[test]
+fn domain_scope_changes_no_verdict() {
+    // The classification is an accessor over an address that already parsed:
+    // asking for it must not change what parses, and a name it calls Local must
+    // still be refused by a config that refuses single labels.
+    assert!("admin@printer".parse::<EmailAddress>().is_err());
+    assert!("a@host.local".parse::<EmailAddress>().is_ok());
+    assert!("a@[192.168.1.5]".parse::<EmailAddress>().is_err());
+}
+
 // ── domain_unicode() accessor ──
 
 #[test]

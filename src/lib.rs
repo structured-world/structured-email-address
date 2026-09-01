@@ -7,6 +7,8 @@
 //! - **Provider-aware normalization**: Gmail dot-stripping, configurable case folding
 //! - **PSL domain validation**: verify domain against the Public Suffix List
 //! - **Anti-homoglyph protection**: detect Cyrillic/Latin lookalikes via Unicode skeleton
+//! - **Domain scope**: whether the domain is one the global DNS can resolve or
+//!   one that means anything only inside a network
 //! - **Configurable strictness**: Strict (5321), Standard (5322), Lax (obs-* allowed)
 //! - **Zero-copy parsing**: internal spans into the input string
 //! - **`no_std` + `alloc`**: builds for WASM and bare metal; disable the `std`
@@ -52,6 +54,7 @@ mod error;
 mod normalize;
 mod parser;
 mod provider;
+mod scope;
 mod validate;
 
 pub use config::{
@@ -61,6 +64,7 @@ pub use config::{
 pub use error::{Error, ErrorKind};
 pub use normalize::confusable_skeleton;
 pub use provider::{ProviderRegistry, ProviderRule};
+pub use scope::{DomainScope, IpScope, LiteralScope};
 
 /// A parsed, validated, and normalized email address.
 ///
@@ -88,12 +92,7 @@ pub struct EmailAddress {
 impl EmailAddress {
     /// Parse and validate with the given configuration.
     pub fn parse_with(input: &str, config: &Config) -> Result<Self, Error> {
-        let parsed = parser::parse(
-            input,
-            config.strictness,
-            config.allow_display_name,
-            config.address_literal,
-        )?;
+        let parsed = parser::parse(input, config)?;
 
         let normalized = normalize::normalize(&parsed, config)?;
         validate::validate(&parsed, &normalized, config)?;
@@ -177,6 +176,49 @@ impl EmailAddress {
     /// ```
     pub fn domain_unicode(&self) -> &str {
         self.domain_unicode.as_deref().unwrap_or(&self.domain)
+    }
+
+    /// Whether the domain names something the global DNS can resolve, or
+    /// something that means anything only inside a network.
+    ///
+    /// A parse answers whether the text is an address the configured grammar
+    /// names. It does not answer this, which a consumer showing an address to a
+    /// person needs next: `admin@printer`, `postmaster@files.local` and
+    /// `a@[192.168.1.5]` are as well formed as `a@example.com`, and what
+    /// separates them is reach, not syntax.
+    ///
+    /// Computed from the canonical domain, so it changes no verdict: an address
+    /// that parses today parses the same way with or without this call. See
+    /// [`DomainScope`] for the reserved names and address ranges, each with the
+    /// document reserving it.
+    ///
+    /// Without the `psl` feature the reading of [`Global`](DomainScope::Global)
+    /// weakens from "under a published public suffix" to "the final label is
+    /// TLD-like", so a no-std consumer gets an answer rather than a compile
+    /// error.
+    ///
+    /// ```
+    /// use structured_email_address::{
+    ///     Config, DomainScope, EmailAddress, IpScope, LiteralScope,
+    /// };
+    ///
+    /// let config = Config::builder()
+    ///     .allow_single_label_domain()
+    ///     .allow_address_literal_rfc5321()
+    ///     .build();
+    /// let scope = |input| EmailAddress::parse_with(input, &config).unwrap().domain_scope();
+    ///
+    /// assert_eq!(scope("a@example.com"), DomainScope::Global);
+    /// assert_eq!(scope("admin@printer"), DomainScope::Local);
+    /// assert_eq!(scope("a@host.local"), DomainScope::Local);
+    /// assert_eq!(
+    ///     scope("a@[192.168.1.5]"),
+    ///     DomainScope::Literal(LiteralScope::Ipv4(IpScope::Local)),
+    /// );
+    /// assert!(scope("a@[192.0.2.1]").is_global());
+    /// ```
+    pub fn domain_scope(&self) -> DomainScope {
+        scope::classify(&self.domain)
     }
 
     /// The display name, if parsed from `"Name" <addr>` or `Name <addr>` format.

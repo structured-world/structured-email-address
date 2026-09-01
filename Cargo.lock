@@ -601,9 +601,9 @@ dependencies = [
 
 [[package]]
 name = "structured-public-domains"
-version = "0.0.25"
+version = "0.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2493c1e0f49e28f8b98dd667b27e9bf17b021b027847f7f2b8305a3eec48c71"
+checksum = "e99744eb726f9687979e7bcf7df3f09b527bc598bb49719088cfe13dcbb7841b"
 
 [[package]]
 name = "syn"

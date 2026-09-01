@@ -5,13 +5,8 @@ use crate::config::Config;
 use crate::parser;
 
 fn parse_and_normalize(input: &str, config: &Config) -> Normalized {
-    let parsed = parser::parse(
-        input,
-        config.strictness,
-        config.allow_display_name,
-        config.address_literal,
-    )
-    .unwrap_or_else(|e| panic!("parse failed for '{input}': {e}"));
+    let parsed =
+        parser::parse(input, config).unwrap_or_else(|e| panic!("parse failed for '{input}': {e}"));
     normalize(&parsed, config).unwrap_or_else(|e| panic!("normalize failed for '{input}': {e}"))
 }
 

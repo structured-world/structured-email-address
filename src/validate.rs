@@ -81,16 +81,27 @@ pub(crate) fn validate(
 
 /// Basic TLD validation: check the last label is at least 2 chars and all-alpha.
 fn validate_tld(domain: &str, pos: usize) -> Result<(), Error> {
+    if has_tld_like_suffix(domain) {
+        return Ok(());
+    }
+    let tld = domain.rsplit('.').next().unwrap_or(domain);
+    Err(Error::new(ErrorKind::UnknownTld(tld.to_string()), pos))
+}
+
+/// Whether the final label is TLD-like: at least two ASCII letters, or a
+/// punycode label with content after the `xn--` prefix.
+///
+/// The rule itself, without the error the check wraps it in, because domain
+/// classification asks the same question when no Public Suffix List is
+/// compiled in and two copies of a rule are one copy too many.
+pub(crate) fn has_tld_like_suffix(domain: &str) -> bool {
     let tld = domain.rsplit('.').next().unwrap_or(domain);
     // Punycode TLDs start with xn-- and must have content after the prefix.
     if tld.starts_with("xn--") && tld.len() > 4 {
-        return Ok(());
+        return true;
     }
     // TLD should be all-alpha and at least 2 chars.
-    if tld.len() < 2 || !tld.chars().all(|c| c.is_ascii_alphabetic()) {
-        return Err(Error::new(ErrorKind::UnknownTld(tld.to_string()), pos));
-    }
-    Ok(())
+    tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic())
 }
 
 /// PSL-based domain validation (requires `psl` feature).

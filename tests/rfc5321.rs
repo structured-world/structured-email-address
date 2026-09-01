@@ -5,7 +5,7 @@
 //! cannot quietly narrow what the crate accepts without a test naming the
 //! section it now contradicts.
 
-use structured_email_address::{Config, EmailAddress, ErrorKind};
+use structured_email_address::{Config, EmailAddress, ErrorKind, Strictness};
 
 /// Read the grammar as written: every `address-literal` alternative.
 fn rfc5321() -> Config {
@@ -15,6 +15,15 @@ fn rfc5321() -> Config {
 /// Read a routable destination: IPv4 and `IPv6:` literals only.
 fn routable() -> Config {
     Config::builder().allow_domain_literal().build()
+}
+
+/// Read `Mailbox` as §4.1.2 writes it: the envelope grammar, both `Local-part`
+/// alternatives, no header syntax.
+fn mailbox() -> Config {
+    Config::builder()
+        .strictness(Strictness::Strict)
+        .allow_quoted_local_part()
+        .build()
 }
 
 fn parses(input: &str, config: &Config) -> bool {
@@ -238,13 +247,69 @@ fn snum_is_ascii_digits_only() {
 //   quoted-pairSMTP = %d92 %d32-126
 
 #[test]
+fn the_quoted_alternative_is_asked_for_rather_than_assumed() {
+    //   Local-part = Dot-string / Quoted-string
+    // Strict refuses addresses that are valid but unroutable in practice, and a
+    // quoted local part is one of those; a reader of an identity asks for it
+    // back, and gets the alternative the section writes.
+    let bare = Config::builder().strictness(Strictness::Strict).build();
+    assert!(
+        !parses("\"a b\"@example.com", &bare),
+        "the quoted alternative stays off until asked for"
+    );
+    assert!(parses("\"a b\"@example.com", &mailbox()));
+    assert!(parses("\"a@b\"@example.com", &mailbox()));
+
+    // And nothing else moves: a Dot-string is a Local-part either way.
+    assert!(parses("a.b@example.com", &bare));
+    assert!(parses("a.b@example.com", &mailbox()));
+}
+
+#[test]
+fn the_quoted_alternative_is_the_whole_local_part() {
+    // §4.1.2 offers Dot-string or Quoted-string, not a sequence of both. The
+    // obs-local-part that would join them is RFC 5322 §4.4, outside this
+    // grammar.
+    assert!(!parses("\"a\".b@example.com", &mailbox()));
+    assert!(!parses("a.\"b\"@example.com", &mailbox()));
+}
+
+#[test]
+fn the_mailbox_reading_still_refuses_header_syntax() {
+    // A comment is RFC 5322 §3.2.2, and asking for the quoted alternative must
+    // not drag the rest of the header grammar in behind it.
+    for input in [
+        "a(comment)@example.com",
+        "(comment)a@example.com",
+        "a@example.com (comment)",
+        " a@example.com",
+    ] {
+        assert!(!parses(input, &mailbox()), "{input} is header syntax");
+    }
+}
+
+#[test]
 fn quoted_local_part_may_hold_an_at_sign() {
     // Inside a Quoted-string the "@" is qtextSMTP (%d64), not the separator.
-    let email: EmailAddress = "\"user@name\"@example.com"
-        .parse()
+    let email = EmailAddress::parse_with("\"user@name\"@example.com", &mailbox())
         .expect("a quoted local part may contain @");
     assert_eq!(email.local_part(), "user@name");
     assert_eq!(email.domain(), "example.com");
+
+    // The header grammar reads the same spelling, so the default agrees.
+    let email: EmailAddress = "\"user@name\"@example.com".parse().expect("valid");
+    assert_eq!(email.local_part(), "user@name");
+}
+
+#[test]
+fn a_quoted_local_part_is_written_back_with_its_quotes() {
+    // The quotes are syntax, not content, so they are not part of the local
+    // part; they reappear when the address is written back, because without
+    // them it would no longer be the address that was read.
+    let email = EmailAddress::parse_with("\"a b\"@example.com", &mailbox()).expect("valid");
+    assert_eq!(email.local_part(), "a b");
+    assert_eq!(email.canonical(), "\"a b\"@example.com");
+    assert_eq!(email.original(), "\"a b\"@example.com");
 }
 
 #[test]
@@ -252,7 +317,7 @@ fn quoted_local_part_admits_a_quoted_pair() {
     //   quoted-pairSMTP = %d92 %d32-126: a backslash before any printable.
     for input in ["\"a\\\"b\"@example.com", "\"a\\\\b\"@example.com"] {
         assert!(
-            parses(input, &Config::default()),
+            parses(input, &mailbox()),
             "{input} is a valid quoted-pairSMTP"
         );
     }
@@ -263,7 +328,7 @@ fn qtext_smtp_covers_its_range_and_stops_at_the_edges() {
     //   qtextSMTP = %d32-33 / %d35-91 / %d93-126
     // Everything printable except the bare quote (%d34) and backslash (%d92),
     // both of which must be escaped as a quoted-pair instead.
-    let config = Config::default();
+    let config = mailbox();
     for body in [" ", "!", "#", "[", "]", "~"] {
         let input = alloc_quoted(body);
         assert!(parses(&input, &config), "{input:?} must parse");
@@ -284,6 +349,34 @@ fn qtext_smtp_covers_its_range_and_stops_at_the_edges() {
         parses("\"a\\b\"@example.com", &config),
         "%d92 before a printable is a quoted-pairSMTP, not bare"
     );
+}
+
+#[test]
+fn qtext_smtp_stops_below_the_space() {
+    //   qtextSMTP starts at %d32, so every control octet is out — including the
+    // tab and the folded line that RFC 5322 §3.2.2 admits as FWS. This is where
+    // the envelope alphabet is narrower than the header one, and the narrowing
+    // is what keeps the opt-in from being a way into the header grammar.
+    let permissive = Config::default();
+    for (input, what) in [
+        ("\"a\tb\"@example.com", "a tab is WSP in FWS, not qtextSMTP"),
+        (
+            "\"a\r\n b\"@example.com",
+            "a folded line is FWS, not qtextSMTP",
+        ),
+        (
+            "\"a\\\tb\"@example.com",
+            "quoted-pairSMTP starts at %d32 too",
+        ),
+        ("\"a\u{7}b\"@example.com", "%d7 is below the range"),
+        ("\"a\u{7f}b\"@example.com", "%d127 is above it"),
+    ] {
+        assert!(!parses(input, &mailbox()), "{what}");
+    }
+    // The first two are the ones the header grammar does admit, so they also
+    // prove the two alphabets are actually being told apart.
+    assert!(parses("\"a\tb\"@example.com", &permissive));
+    assert!(parses("\"a\r\n b\"@example.com", &permissive));
 }
 
 // ── Size limits (RFC 5321 §4.5.3.1) ──────────────────────────────────────────
