@@ -831,3 +831,41 @@ fn ipv6_address_literal_tag_is_case_insensitive() {
         );
     }
 }
+
+#[test]
+fn reject_admits_no_literal_at_all() {
+    // `parse_domain` refuses the '[' before reaching here, so this arm is only
+    // reachable directly. It still has to answer, because the predicate is what
+    // decides whether any literal is a literal.
+    for content in ["192.168.1.1", "IPv6:::1", "TAG:x"] {
+        assert!(
+            !is_address_literal(content, AddressLiteral::Reject),
+            "{content}"
+        );
+    }
+}
+
+#[test]
+fn an_over_long_ipv6_literal_is_rejected_not_truncated() {
+    // Depadding an IPv6v4 tail rewrites the address into a fixed stack buffer
+    // sized for the longest address the grammar can produce. A literal longer
+    // than that must be refused: silently truncating it would hand `Ipv6Addr` a
+    // different address than the one written.
+    let long_head = "1".repeat(MAX_IPV6_ADDR_LEN * 2);
+    let content = alloc::format!("IPv6:{long_head}:012.0.2.1");
+    assert!(!is_address_literal(&content, AddressLiteral::Rfc5321));
+
+    // Overflow can also arrive part-way through the tail, once the head has
+    // already been written: a head that fits alone but not beside the octets it
+    // precedes must be refused just the same.
+    let head = "1".repeat(MAX_IPV6_ADDR_LEN - 8);
+    let mid_tail = alloc::format!("IPv6:{head}:012.0.2.1");
+    assert!(!is_address_literal(&mid_tail, AddressLiteral::Rfc5321));
+
+    // The same shape inside the buffer's reach still parses or fails on its own
+    // merits rather than on length.
+    assert!(is_address_literal(
+        "IPv6:::ffff:012.0.2.1",
+        AddressLiteral::Rfc5321
+    ));
+}

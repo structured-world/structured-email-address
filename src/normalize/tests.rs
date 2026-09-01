@@ -188,3 +188,48 @@ fn obs_cfws_stripped_with_idna() {
     assert_eq!(n.domain, "xn--mnchen-3ya.de");
     assert_eq!(n.domain_unicode.as_deref(), Some("münchen.de"));
 }
+
+#[test]
+fn decomposed_input_is_composed_before_anything_else() {
+    // Text already in NFC is lent rather than copied, so the composing path is
+    // the one a test has to reach on purpose. "é" written as "e" plus a
+    // combining acute must end up identical to the precomposed spelling, or the
+    // same address entered two ways would not compare equal.
+    let config = Config::default();
+
+    let decomposed_local = parse_and_normalize("cafe\u{301}@example.com", &config);
+    let precomposed_local = parse_and_normalize("caf\u{e9}@example.com", &config);
+    assert_eq!(decomposed_local.local_part, precomposed_local.local_part);
+    assert_eq!(decomposed_local.local_part, "caf\u{e9}");
+
+    let decomposed_domain = parse_and_normalize("user@mu\u{308}nchen.de", &config);
+    let precomposed_domain = parse_and_normalize("user@m\u{fc}nchen.de", &config);
+    assert_eq!(decomposed_domain.domain, precomposed_domain.domain);
+    assert_eq!(decomposed_domain.domain, "xn--mnchen-3ya.de");
+}
+
+#[test]
+fn dots_always_strips_regardless_of_provider() {
+    // The Gmail-only policy asks the registry; this one does not, so a domain
+    // with no provider rule must still lose its dots.
+    let config = Config::builder().dots_always_strip().build();
+
+    let known = parse_and_normalize("a.l.i.c.e@gmail.com", &config);
+    assert_eq!(known.local_part, "alice");
+
+    let unknown = parse_and_normalize("a.l.i.c.e@example.com", &config);
+    assert_eq!(
+        unknown.local_part, "alice",
+        "Always must not consult the provider registry"
+    );
+}
+
+#[test]
+fn a_quoted_local_ending_in_a_backslash_keeps_it() {
+    // `"a\"` reaches unescaping with a backslash and nothing after it. The
+    // parser has already accepted the string, so unescaping must emit the
+    // dangling character rather than drop it or run past the end.
+    let config = Config::default();
+    let n = parse_and_normalize("\"a\\\\\"@example.com", &config);
+    assert_eq!(n.local_part, "a\\");
+}

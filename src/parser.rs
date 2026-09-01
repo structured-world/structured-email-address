@@ -634,6 +634,13 @@ fn parse_domain_literal(parser: &mut Parser<'_>, policy: AddressLiteral) -> Resu
 /// an `address-literal` that `policy` admits (RFC 5321 §4.1.3). Uses `core::net`
 /// parsers, so it needs no allocator.
 fn is_address_literal(content: &str, policy: AddressLiteral) -> bool {
+    // Checked before anything is recognised, so the answer honours the policy
+    // even though `parse_domain` refuses the '[' before reaching here: a
+    // predicate that reports a literal under a policy admitting none would be
+    // wrong the moment it gained a second caller.
+    if policy == AddressLiteral::Reject {
+        return false;
+    }
     if is_ipv6_address_literal(content) {
         return true;
     }
@@ -653,6 +660,7 @@ fn is_address_literal(content: &str, policy: AddressLiteral) -> bool {
     }
 
     match policy {
+        // Returned above.
         AddressLiteral::Reject => false,
         AddressLiteral::Routable => content.parse::<core::net::Ipv4Addr>().is_ok(),
         AddressLiteral::Rfc5321 => {
