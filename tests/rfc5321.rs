@@ -67,6 +67,21 @@ fn general_address_literal_keeps_the_case_of_its_body() {
 }
 
 #[test]
+fn an_ip_literal_is_canonicalized_to_one_spelling() {
+    // Both parts of an IP literal are case-insensitive: the `IPv6:` tag is an
+    // ABNF string literal (RFC 5234 §2.3) and IPv6 hex digits carry no case
+    // (RFC 4291 §2.2). Two spellings of one address must therefore land on one
+    // canonical domain, or equality and hashing split addresses that route to
+    // the same host.
+    let upper = EmailAddress::parse_with("user@[IPv6:ABCD::1]", &routable())
+        .expect("uppercase IPv6 literal must parse");
+    let lower = EmailAddress::parse_with("user@[ipv6:abcd::1]", &routable())
+        .expect("lowercase IPv6 literal must parse");
+    assert_eq!(upper.domain(), lower.domain());
+    assert_eq!(upper.domain(), "[ipv6:abcd::1]");
+}
+
+#[test]
 fn standardized_tag_is_an_ldh_str() {
     //   Standardized-tag = Ldh-str
     //   Ldh-str = *( ALPHA / DIGIT / "-" ) Let-dig      (RFC 5321 §4.1.2)

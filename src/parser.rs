@@ -634,19 +634,15 @@ fn parse_domain_literal(parser: &mut Parser<'_>, policy: AddressLiteral) -> Resu
 /// an `address-literal` that `policy` admits (RFC 5321 §4.1.3). Uses `core::net`
 /// parsers, so it needs no allocator.
 fn is_address_literal(content: &str, policy: AddressLiteral) -> bool {
-    use core::net::Ipv6Addr;
-
-    // The "IPv6:" tag is an ABNF string literal, hence case-insensitive
-    // (RFC 5234 §2.3): `[ipv6:::1]` and `[IPV6:...]` are equally valid. The tag
-    // is checked before General-address-literal under every policy: RFC 5321
-    // §4.1.3 requires a Standardized-tag to be defined by a Standards-Track RFC,
-    // and IPv6 is one, so the tag keeps its own alternative's meaning and cannot
-    // be reread as free dcontent.
-    if content
-        .get(..5)
-        .is_some_and(|tag| tag.eq_ignore_ascii_case("IPv6:"))
-    {
-        return content[5..].parse::<Ipv6Addr>().is_ok();
+    if is_ipv6_address_literal(content) {
+        return true;
+    }
+    // An `IPv6:`-tagged literal that failed the check above is malformed, not a
+    // General-address-literal: RFC 5321 §4.1.3 requires a Standardized-tag to be
+    // defined by a Standards-Track RFC, and IPv6 is one, so the tag keeps its own
+    // alternative's meaning and cannot be reread as free dcontent.
+    if has_ipv6_tag(content) {
+        return false;
     }
 
     match policy {
@@ -656,6 +652,35 @@ fn is_address_literal(content: &str, policy: AddressLiteral) -> bool {
             is_ipv4_address_literal(content) || is_general_address_literal(content)
         }
     }
+}
+
+/// Whether the literal content carries the `IPv6:` tag, valid address or not.
+///
+/// The tag is an ABNF string literal, hence case-insensitive (RFC 5234 §2.3):
+/// `[ipv6:::1]` and `[IPV6:...]` are equally valid spellings.
+fn has_ipv6_tag(content: &str) -> bool {
+    content
+        .get(..5)
+        .is_some_and(|tag| tag.eq_ignore_ascii_case("IPv6:"))
+}
+
+/// `IPv6-address-literal = "IPv6:" IPv6-addr` (RFC 5321 §4.1.3).
+fn is_ipv6_address_literal(content: &str) -> bool {
+    has_ipv6_tag(content) && content[5..].parse::<core::net::Ipv6Addr>().is_ok()
+}
+
+/// Whether the literal content names an IP address rather than an opaque
+/// system address.
+///
+/// Normalization needs this distinction: an IP literal carries no case in
+/// either part, so folding it keeps two spellings of one address equal, while a
+/// `General-address-literal` body is opaque to SMTP and meaningful to the
+/// receiving system, so folding it would hand that system a different address.
+/// The permissive `Snum` reading is used here on purpose: `[012.0.2.1]` is an IP
+/// literal under the grammar even where the routable reading refuses it, and
+/// case-folding it either way is a no-op.
+pub(crate) fn is_ip_address_literal(content: &str) -> bool {
+    is_ipv6_address_literal(content) || is_ipv4_address_literal(content)
 }
 
 /// `IPv4-address-literal = Snum 3("." Snum)`, `Snum = 1*3DIGIT` in 0..=255

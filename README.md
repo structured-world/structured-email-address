@@ -26,7 +26,7 @@ Every Rust email crate stops at RFC validation. This one goes further:
 | Serde support | Yes | - | **Yes** |
 | Zero dependencies* | Yes | nom | `idna` + 3 |
 
-\* Dependencies: `idna`, `unicode-normalization`, `unicode-security`, `once_cell`. Optional: `structured-public-domains`, `serde`.
+\* Dependencies: `idna`, `unicode-normalization`, `unicode-security`. Optional: `structured-public-domains`, `serde`.
 
 ## Quick Start
 
@@ -174,10 +174,11 @@ structured-email-address = { version = "0.0.16", default-features = false }
 ### `no_std`
 
 The parser and validator build against `core` + `alloc`, so they run in a WASM
-sandbox or on bare metal. CI checks this on `thumbv7em-none-eabihf`, a target
-with no `std` at all — checking it on a host target proves nothing, because
-feature resolution can pull `std` back in and the build passes where the real
-target fails.
+sandbox or on bare metal. Nothing here needs a pointer-width atomic either, so
+the crate builds on targets without compare-and-swap. CI checks both
+`thumbv7em-none-eabihf` and `thumbv6m-none-eabi`, targets with no `std` at all;
+checking on a host target proves nothing, because feature resolution can pull
+`std` back in and the build passes where the real target fails.
 
 ```toml
 structured-email-address = { version = "0.0.16", default-features = false, features = ["alloc"] }

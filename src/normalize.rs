@@ -11,7 +11,7 @@ use unicode_security::confusable_detection::skeleton;
 
 use crate::config::{CasePolicy, Config, DotPolicy, SubaddressPolicy};
 use crate::error::{Error, ErrorKind};
-use crate::parser::Parsed;
+use crate::parser::{self, Parsed};
 
 /// Result of normalization: owned canonical parts.
 #[derive(Debug, Clone)]
@@ -63,15 +63,25 @@ pub(crate) fn normalize(parsed: &Parsed<'_>, config: &Config) -> Result<Normaliz
 
     // Canonical (IDNA-ASCII) domain — computed up front so provider lookup,
     // freemail detection (in parse_with), and the final domain all use the SAME
-    // form. Domain literals are not hostnames, so they skip IDNA and keep their
-    // case: RFC 5321 §2.4 makes domain NAMES case-insensitive, and says nothing
-    // of the kind about an address-literal's content. A General-address-literal
-    // body is opaque to SMTP and meaningful to the receiving system, so folding
-    // `[AS400:QSYS]` to `[as400:qsys]` would hand that system a different
-    // address (RFC 5321 §4.1.3).
+    // form. Domain literals are not hostnames, so they skip IDNA; whether they
+    // also fold case depends on which literal it is. An IP literal carries no
+    // case in either part — the `IPv6:` tag is an ABNF string literal (RFC 5234
+    // §2.3) and IPv6 hex digits are case-insensitive (RFC 4291 §2.2) — so it is
+    // folded, keeping two spellings of one address equal under comparison and
+    // hashing. A General-address-literal is not: its body is opaque to SMTP and
+    // meaningful to the receiving system, so folding `[AS400:QSYS]` would hand
+    // that system a different address (RFC 5321 §4.1.3).
     // Strict mode: STD3 ASCII deny-list, hyphen checks, DNS length verification.
     let canonical_domain = if nfc_domain.starts_with('[') {
-        nfc_domain.into_owned()
+        let inner = nfc_domain
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+            .unwrap_or(&nfc_domain);
+        if parser::is_ip_address_literal(inner) {
+            nfc_domain.to_lowercase()
+        } else {
+            nfc_domain.into_owned()
+        }
     } else {
         idna::domain_to_ascii_strict(&nfc_domain).map_err(|e| {
             Error::new(

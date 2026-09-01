@@ -63,15 +63,24 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
-          # A bare-metal target with no `std` at all. Checking this on a host
+          # Bare-metal targets with no `std` at all. Checking this on a host
           # target would prove nothing: with std present, feature resolution can
           # pull it back in and the build passes where the real target fails.
-          targets: thumbv7em-none-eabihf
+          # thumbv6m additionally has no compare-and-swap, which catches a
+          # dependency that reaches for pointer-width atomics.
+          targets: thumbv7em-none-eabihf, thumbv6m-none-eabi
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: no-std
       - name: Check (no_std + alloc)
         run: cargo check --target thumbv7em-none-eabihf --no-default-features --features alloc
+      # Every advertised combination, not just the smallest one: a feature that
+      # compiles alone can still fail beside another (serde needs its own `alloc`
+      # to have `String` impls at all).
+      - name: Check (no_std + alloc + serde)
+        run: cargo check --target thumbv7em-none-eabihf --no-default-features --features alloc,serde
+      - name: Check (no_std + alloc, no compare-and-swap)
+        run: cargo check --target thumbv6m-none-eabi --no-default-features --features alloc
       - name: Clippy (no_std + alloc)
         run: cargo clippy --target thumbv7em-none-eabihf --no-default-features --features alloc -- -D warnings
 

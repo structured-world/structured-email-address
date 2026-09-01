@@ -21,7 +21,10 @@ alloc = []
 # Everything that genuinely needs an operating system: `std::error::Error`
 # integration in dependencies, and rayon's thread pool.
 std = ["alloc", "idna/std", "unicode-normalization/std", "serde?/std"]
-serde = ["dep:serde"]
+# `serde/alloc`, not just the dependency: the impls here serialize `String`, and
+# serde only provides its `String` impls behind `alloc` or `std`. Without this
+# the advertised `alloc,serde` combination does not compile.
+serde = ["dep:serde", "serde/alloc", "alloc"]
 psl = ["dep:structured-public-domains"]
 rayon = ["dep:rayon", "std"]
 
@@ -36,13 +39,6 @@ serde = { version = "1", default-features = false, features = [
 ], optional = true }
 unicode-normalization = { version = "0.1", default-features = false }
 unicode-security = { version = "0.1", default-features = false }
-# Lazily built process-wide provider registry. `race::OnceBox` is the core+alloc
-# equivalent of `std::sync::LazyLock`, which would tie the crate to std for a
-# single static.
-once_cell = { version = "1", default-features = false, features = [
-    "alloc",
-    "race",
-] }
 rayon = { version = "1", optional = true }
 
 [dev-dependencies]

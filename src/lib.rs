@@ -135,6 +135,14 @@ impl EmailAddress {
     }
 
     /// The canonical domain (IDNA-encoded, lowercased).
+    ///
+    /// An address literal keeps its brackets and is not IDNA-encoded. An IP
+    /// literal is still lowercased, since neither the `IPv6:` tag nor a hex
+    /// digit carries case; a [`General-address-literal`] keeps the spelling it
+    /// was given, because its body is opaque to SMTP and meaningful only to the
+    /// receiving system.
+    ///
+    /// [`General-address-literal`]: AddressLiteral::Rfc5321
     pub fn domain(&self) -> &str {
         &self.domain
     }
