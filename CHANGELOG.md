@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.18](https://github.com/structured-world/structured-email-address/compare/v0.0.17...v0.0.18) - 2026-09-01
+
+### Added
+
+- read the Mailbox grammar exactly, and say how far the domain reaches ([#84](https://github.com/structured-world/structured-email-address/pull/84))
+
 ## [0.0.17](https://github.com/structured-world/structured-email-address/compare/v0.0.16...v0.0.17) - 2026-09-01
 
 ### Added
