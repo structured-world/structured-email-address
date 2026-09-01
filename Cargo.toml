@@ -37,7 +37,7 @@ idna = { version = "1.1", default-features = false, features = [
     "alloc",
     "compiled_data",
 ] }
-structured-public-domains = { version = "0.0.17", optional = true }
+structured-public-domains = { version = "0", optional = true }
 serde = { version = "1", default-features = false, features = [
     "derive",
 ], optional = true }
