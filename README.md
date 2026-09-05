@@ -283,10 +283,10 @@ over-length parts, bare control characters) are rejected. See
 
 ![USDT TRC-20 Donation QR Code](assets/usdt-qr.svg)
 
-USDT (TRC-20): `TFDsezHa1cBkoeZT5q2T49Wp66K8t2DmdA`
+USDT (TRC-20), maintainer's personal wallet: `TFDsezHa1cBkoeZT5q2T49Wp66K8t2DmdA`
 
 </div>
 
 ## License
 
-Apache License 2.0
+Copyright 2026 Dmitry Prudnikov. Apache License 2.0; see [LICENSE](LICENSE).
