@@ -1,6 +1,6 @@
 [package]
 name = "structured-email-address"
-version = "0.0.19"
+version = "0.0.20"
 edition = "2024"
 rust-version = "1.92"
 authors = ["Dmitry Prudnikov <mail@polaz.com>"]

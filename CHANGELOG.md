@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.20](https://github.com/structured-world/structured-email-address/compare/v0.0.19...v0.0.20) - 2026-09-05
+
+### Documentation
+
+- name the copyright holder and the wallet owner in the README ([#92](https://github.com/structured-world/structured-email-address/pull/92))
+
 ## [0.0.19](https://github.com/structured-world/structured-email-address/compare/v0.0.18...v0.0.19) - 2026-09-01
 
 ### Fixed
