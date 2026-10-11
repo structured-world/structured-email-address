@@ -8,14 +8,14 @@ use crate::normalize::Normalized;
 use crate::parser::Parsed;
 
 /// Maximum local-part length in octets (RFC 5321 §4.5.3.1.1).
-const MAX_LOCAL_PART_LEN: usize = 64;
+pub(crate) const MAX_LOCAL_PART_LEN: usize = 64;
 
 /// Maximum total address length in octets (RFC 5321 §4.5.3.1.3).
 /// This is the addr-spec (without display name), so local + "@" + domain.
-const MAX_ADDRESS_LEN: usize = 254;
+pub(crate) const MAX_ADDRESS_LEN: usize = 254;
 
 /// Maximum domain label length in octets (RFC 1035 §2.3.4).
-const MAX_LABEL_LEN: usize = 63;
+pub(crate) const MAX_LABEL_LEN: usize = 63;
 
 /// Validate a parsed and normalized email address.
 pub(crate) fn validate(

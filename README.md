@@ -1,5 +1,14 @@
 # structured-email-address
 
+For a borrowed ASCII SMTP identity, `is_smtp_mailbox(input)` checks syntax
+without allocating or normalizing. It accepts quoted local parts, single-label
+domains and SMTP address-literal syntax, and refuses header display names,
+comments, angle brackets and non-ASCII input. It applies the existing SMTP
+octet bounds; oversized input is refused before scanning and remaining work
+is linear. This does not establish deliverability, IDNA validity or registration
+of a general address-literal tag. Use `EmailAddress::parse_with` when an owned,
+normalized address is required.
+
 RFC 5321/5322/6531 conformant email address parser, validator, and normalizer for Rust.
 
 [![CI](https://github.com/structured-world/structured-email-address/actions/workflows/ci.yml/badge.svg)](https://github.com/structured-world/structured-email-address/actions/workflows/ci.yml)
