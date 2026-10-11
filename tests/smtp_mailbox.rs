@@ -202,7 +202,9 @@ fn smtp_syntax_agrees_with_the_existing_strict_grammar_on_ascii_mutations() {
             let original = bytes[at];
             for byte in 0_u8..=127 {
                 bytes[at] = byte;
-                let input = core::str::from_utf8(&bytes).unwrap();
+                let Ok(input) = core::str::from_utf8(&bytes) else {
+                    panic!("ASCII mutation produced invalid UTF-8");
+                };
                 let owned =
                     structured_email_address::EmailAddress::parse_with(input, &config).is_ok();
                 assert_eq!(is_smtp_mailbox(input), owned, "{input:?}");
