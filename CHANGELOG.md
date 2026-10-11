@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.21](https://github.com/structured-world/structured-email-address/compare/v0.0.20...v0.0.21) - 2026-10-11
+
+### Added
+
+- validate SMTP mailboxes without allocation ([#95](https://github.com/structured-world/structured-email-address/pull/95))
+
 ## [0.0.20](https://github.com/structured-world/structured-email-address/compare/v0.0.19...v0.0.20) - 2026-09-05
 
 ### Documentation
