@@ -170,6 +170,45 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// ASCII SMTP identity check sharing the parser's strict grammar. The strict
+/// helpers never enter CFWS/obs branches, collect comments or materialize
+/// clean strings. Their error branches construct only allocation-free kinds.
+pub(crate) fn is_smtp_mailbox(input: &str) -> bool {
+    use crate::validate::{MAX_ADDRESS_LEN, MAX_LABEL_LEN, MAX_LOCAL_PART_LEN};
+    if input.is_empty() || input.len() > MAX_ADDRESS_LEN || !input.is_ascii() {
+        return false;
+    }
+    let mut parser = Parser::new(input);
+    let Ok((local, clean)) = parse_local_part(&mut parser, Strictness::Strict, true) else {
+        return false;
+    };
+    debug_assert!(clean.is_none());
+    if local.end - local.start > MAX_LOCAL_PART_LEN || !parser.eat('@') {
+        return false;
+    }
+    let Ok((domain, clean)) =
+        parse_domain(&mut parser, Strictness::Strict, AddressLiteral::Rfc5321)
+    else {
+        return false;
+    };
+    debug_assert!(clean.is_none());
+    debug_assert_eq!(parser.comments.capacity(), 0);
+    if !parser.at_end() {
+        return false;
+    }
+    let domain = domain.as_str(input);
+    // Literals have no DNS labels. DomainLabelTooLong in the owned pipeline
+    // carries a String; this predicate checks the same bound without it.
+    if !domain.starts_with('[') {
+        for label in domain.split('.') {
+            if label.len() > MAX_LABEL_LEN {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// Parse an email address string against the grammar the config selects.
 ///
 /// Takes the whole [`Config`], as the other two stages of the pipeline do,
@@ -693,6 +732,31 @@ fn is_address_literal(content: &str, policy: AddressLiteral) -> bool {
     // wrong the moment it gained a second caller.
     if policy == AddressLiteral::Reject {
         return false;
+    }
+    // RFC 5321 §4.1.3: IPv6-comp and IPv6v4-comp compress at least two
+    // 16-bit groups. RFC 4291 / core::net also permit one. Erratum 4315 is
+    // Held for Document Update, so it does not replace the selected grammar.
+    // https://www.rfc-editor.org/rfc/rfc5321#section-4.1.3
+    // https://www.rfc-editor.org/errata/eid4315
+    if policy == AddressLiteral::Rfc5321 && has_ipv6_tag(content) {
+        let address = &content[5..];
+        if address.contains("::") {
+            let mut groups = 0;
+            let mut ipv4 = false;
+            for group in address.split(':') {
+                if !group.is_empty() {
+                    if group.contains('.') {
+                        ipv4 = true;
+                    } else {
+                        groups += 1;
+                    }
+                }
+            }
+            let maximum = if ipv4 { 4 } else { 6 };
+            if groups > maximum {
+                return false;
+            }
+        }
     }
     if ipv6_address_literal(content).is_some() {
         return true;

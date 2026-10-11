@@ -66,6 +66,37 @@ pub use normalize::confusable_skeleton;
 pub use provider::{ProviderRegistry, ProviderRule};
 pub use scope::{DomainScope, IpScope, LiteralScope};
 
+/// Tests ASCII SMTP Mailbox syntax without allocating or normalizing input.
+///
+/// Use this when checking a borrowed identity rather than constructing an
+/// [`EmailAddress`]. Accepts the dot-string and quoted-string local parts of
+/// [RFC 5321 §4.1.2](https://www.rfc-editor.org/rfc/rfc5321#section-4.1.2),
+/// single-label domains, and the address-literal syntax of §4.1.3. Header
+/// display names, angle brackets, comments, folding whitespace and SMTPUTF8
+/// are refused. The empty quoted local part is syntactically permitted.
+///
+/// Applies the existing 64-octet local-part, 254-octet mailbox and 63-octet
+/// domain-label bounds. Inputs longer than 254 octets are refused before
+/// scanning; remaining work is linear in input length with bounded stack use.
+/// Both acceptance and refusal allocate no heap storage, including diagnostics.
+///
+/// This is a syntax test, not a deliverability or registry-membership check.
+/// General address-literal tags are checked syntactically; their registration
+/// and system-specific meaning must be established separately. No IDNA,
+/// provider rules, Unicode normalization, DNS or PSL lookup is performed.
+///
+/// # Examples
+///
+/// ```
+/// use structured_email_address::is_smtp_mailbox;
+/// assert!(is_smtp_mailbox("\"a b\"@localhost"));
+/// assert!(!is_smtp_mailbox("Alice <user@example.com>"));
+/// ```
+#[must_use]
+pub fn is_smtp_mailbox(input: &str) -> bool {
+    parser::is_smtp_mailbox(input)
+}
+
 /// A parsed, validated, and normalized email address.
 ///
 /// Immutable after construction. All accessors return borrowed data.

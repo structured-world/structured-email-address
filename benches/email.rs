@@ -1,9 +1,40 @@
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use structured_email_address::{Config, EmailAddress, Strictness};
+use structured_email_address::{Config, EmailAddress, Strictness, is_smtp_mailbox};
 
 const BATCH_SIZE: usize = 100_000;
+
+fn bench_smtp_mailbox(c: &mut Criterion) {
+    let mut group = c.benchmark_group("smtp_mailbox");
+    let config = Config::builder()
+        .strictness(Strictness::Strict)
+        .allow_quoted_local_part()
+        .allow_address_literal_rfc5321()
+        .allow_single_label_domain()
+        .build();
+    for (name, input) in [
+        ("simple", "user@example.com"),
+        ("quoted", "\"user name\"@example.com"),
+        ("ipv6_padded", "user@[IPv6:::ffff:012.0.2.1]"),
+    ] {
+        group.bench_with_input(BenchmarkId::new("syntax", name), &input, |b, input| {
+            b.iter(|| black_box(is_smtp_mailbox(black_box(input))));
+        });
+        // Same SMTP grammar configuration; constructing the owned result
+        // additionally performs the normalization and storage a syntax-only
+        // caller previously had to pay for.
+        group.bench_with_input(BenchmarkId::new("owned", name), &input, |b, input| {
+            b.iter(|| {
+                black_box(EmailAddress::parse_with(
+                    black_box(input),
+                    black_box(&config),
+                ))
+            });
+        });
+    }
+    group.finish();
+}
 
 fn batch_inputs() -> Vec<&'static str> {
     let valid: &[&str] = &[
@@ -204,6 +235,7 @@ fn bench_batch_par(c: &mut Criterion) {
 #[cfg(feature = "rayon")]
 criterion_group!(
     benches,
+    bench_smtp_mailbox,
     bench_parse,
     bench_normalize,
     bench_strictness,
@@ -217,6 +249,7 @@ criterion_main!(benches);
 #[cfg(not(feature = "rayon"))]
 criterion_group!(
     benches,
+    bench_smtp_mailbox,
     bench_parse,
     bench_normalize,
     bench_strictness,
