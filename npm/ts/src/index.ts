@@ -1,7 +1,7 @@
 // Public API for @structured-world/structured-email-address-ts: the Rust
 // crate's pipeline ported to TypeScript. Public Suffix List lookups use the
-// same binary trie as the Rust crate, downloaded once by
-// @structured-world/structured-public-domains/tiny and cached locally.
+// Rust crate's binary trie format, in its newest data release, downloaded once
+// by @structured-world/structured-public-domains/tiny and cached locally.
 
 import { isLoaded, load } from "@structured-world/structured-public-domains/tiny";
 
