@@ -1,0 +1,58 @@
+{
+  "name": "@structured-world/structured-email-address-ts",
+  "version": "0.0.21",
+  "description": "RFC 5321/5322/6531 email address parser, validator and normalizer in native TypeScript: subaddress extraction, provider-aware normalization, Public Suffix List validation, anti-homoglyph skeletons. Same results as the Rust crate.",
+  "license": "Apache-2.0",
+  "author": "Dmitry Prudnikov <mail@polaz.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/structured-world/structured-email-address",
+    "directory": "npm/ts"
+  },
+  "keywords": [
+    "email",
+    "email-address",
+    "validation",
+    "rfc-5322",
+    "rfc-5321",
+    "normalization",
+    "psl"
+  ],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": "^22.14.0 || >=24.0.0"
+  },
+  "scripts": {
+    "gen:data": "node scripts/gen-confusables.mjs",
+    "build": "npm run gen:data && tsup && node -e \"require('fs').copyFileSync('../../README.md','README.md')\"",
+    "test": "npm run gen:data && vitest run",
+    "typecheck": "npm run gen:data && tsc --noEmit"
+  },
+  "dependencies": {
+    "@structured-world/structured-public-domains": "~0.0.43",
+    "tr46": "^7.0.0"
+  }
+}

@@ -163,6 +163,54 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  npm:
+    needs: lint
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: npm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Install the WebAssembly toolchain
+        run: ./npm/scripts/install-wasm-tools.sh
+      - name: Install deps
+        working-directory: npm
+        run: npm ci
+      # Each step generates what it reads (the WebAssembly module, the
+      # confusables table) from the Rust sources; nothing generated is committed.
+      - name: Typecheck
+        working-directory: npm
+        run: npm run typecheck
+      - name: Unit tests
+        working-directory: npm
+        run: npm run test --workspaces
+      - name: Build (ESM + CJS + dts)
+        working-directory: npm
+        run: npm run build
+      - name: Smoke-test both module formats
+        working-directory: npm
+        run: |
+          node --input-type=module -e "import { init, parse } from './default/dist/index.js'; if (await init() !== 'wasm' || parse('a@Example.COM').domain !== 'example.com') process.exit(1)"
+          node --input-type=commonjs -e "const { init, parse } = require('./default/dist/index.cjs'); init({ backend: 'ts' }).then((b) => { if (b !== 'ts' || parse('a@Example.COM').domain !== 'example.com') process.exit(1) })"
+      - name: Parity with the Rust crate
+        run: |
+          cargo build --release --locked -p structured-email-address-wasm --example parity
+          node npm/scripts/parity-cases.mjs > "$RUNNER_TEMP/cases.jsonl"
+          ./target/release/examples/parity < "$RUNNER_TEMP/cases.jsonl" > "$RUNNER_TEMP/rust.out"
+          node npm/scripts/parity.mjs wasm < "$RUNNER_TEMP/cases.jsonl" > "$RUNNER_TEMP/wasm.out"
+          node npm/scripts/parity.mjs ts < "$RUNNER_TEMP/cases.jsonl" > "$RUNNER_TEMP/ts.out"
+          diff "$RUNNER_TEMP/rust.out" "$RUNNER_TEMP/wasm.out"
+          diff "$RUNNER_TEMP/rust.out" "$RUNNER_TEMP/ts.out"
+
   bench:
     needs: lint
     timeout-minutes: 15

@@ -13,6 +13,7 @@ RFC 5321/5322/6531 conformant email address parser, validator, and normalizer fo
 
 [![CI](https://github.com/structured-world/structured-email-address/actions/workflows/ci.yml/badge.svg)](https://github.com/structured-world/structured-email-address/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/structured-email-address.svg)](https://crates.io/crates/structured-email-address)
+[![npm](https://img.shields.io/npm/v/@structured-world/structured-email-address.svg)](https://www.npmjs.com/package/@structured-world/structured-email-address)
 [![docs.rs](https://docs.rs/structured-email-address/badge.svg)](https://docs.rs/structured-email-address)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
@@ -275,6 +276,66 @@ assert_eq!(
     confusable_skeleton("alice"),  // Latin a
 );
 ```
+
+## JavaScript / TypeScript
+
+The same parser ships on npm with two interchangeable backends behind one API:
+
+| Package | Backend | Public Suffix List |
+|---------|---------|--------------------|
+| `@structured-world/structured-email-address-wasm` | This crate compiled to WebAssembly | Embedded in the module; no network |
+| `@structured-world/structured-email-address-ts` | Native TypeScript port | The same binary trie, downloaded once and cached (IndexedDB in browsers, a temp file in Node) |
+| `@structured-world/structured-email-address` | Either, chosen at startup | As the chosen backend |
+
+Install the one you want; each downloads only its own backend:
+
+```sh
+npm install @structured-world/structured-email-address        # both, auto-selected
+npm install @structured-world/structured-email-address-wasm   # WebAssembly only
+npm install @structured-world/structured-email-address-ts     # TypeScript only
+```
+
+Every package exports the same functions. `init()` is awaited once, then
+everything is synchronous:
+
+```typescript
+import { init, parse, EmailAddressError } from '@structured-world/structured-email-address';
+
+await init(); // "wasm", or "ts" where WebAssembly is unavailable or refused by CSP
+
+const email = parse('A.L.I.C.E+promo@Gmail.COM', {
+  subaddress: 'strip',
+  dotPolicy: 'gmailOnly',
+  casePolicy: 'all',
+  domainCheck: 'psl',
+});
+email.canonical;   // "alice@gmail.com"
+email.tag;         // "promo"
+email.freemail;    // true
+
+try {
+  parse('user@');
+} catch (e) {
+  if (e instanceof EmailAddressError) e.kind; // { type: "EmptyDomain" }
+}
+```
+
+The default package's `init({ backend: 'wasm' | 'ts' | 'auto' })` picks the
+backend; `"auto"` (the default) prefers WebAssembly, which needs no network, and
+falls back to TypeScript when WebAssembly is missing or cannot be instantiated.
+Only the chosen backend is loaded: bundlers split each into its own chunk.
+
+Options mirror `Config` (`strictness`, `dotPolicy`, `casePolicy`, `domainCheck`,
+`subaddress`, `addressLiteral`, `allowDisplayName`, `providerAware`,
+`providers`, ...), and `createParser(config)` binds one for repeated use.
+`parseBatch`, `isSmtpMailbox` and `confusableSkeleton` are there too. Error
+positions are UTF-16 offsets, so they index the input string directly; length
+limits are still counted in octets, as the RFCs count them.
+
+Both backends are checked against this crate on every CI run: over a million
+cases (the isEmail suite and targeted edge cases under nine configurations, and
+the confusable skeleton of every Unicode scalar value) must produce
+byte-identical results.
 
 ## Conformance
 

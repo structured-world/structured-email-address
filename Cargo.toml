@@ -11,6 +11,14 @@ license = "Apache-2.0"
 readme = "README.md"
 keywords = ["email", "email-address", "validation", "rfc-5322", "normalization"]
 categories = ["parser-implementations", "text-processing"]
+# The npm packages are built from this repository but are not part of the crate.
+exclude = ["/npm", "/bindings"]
+
+# The WebAssembly bindings behind the npm package. A member rather than a crate
+# of its own so the bindings, the parity harness and this crate resolve one
+# lockfile, and so one Public Suffix List version is what all of them embed.
+[workspace]
+members = ["bindings/wasm"]
 
 [features]
 default = ["std", "serde", "psl"]
@@ -53,6 +61,15 @@ roxmltree = "0.21.1"
 [[bench]]
 name = "email"
 harness = false
+
+# The WebAssembly module ships to browsers, where its size is download time.
+# A profile of its own, so `release` and the benchmarks keep their settings.
+[profile.wasm]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
 
 # Lints for production code are set via cfg_attr(not(test)) in lib.rs,
 # which correctly excludes test code from deny(unwrap_used, expect_used, panic).
