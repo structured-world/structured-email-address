@@ -213,8 +213,8 @@ export interface WasmInitOptions {
  */
 export interface PslLoadOptions {
   /**
-   * Where to fetch `psl.bin` from. Defaults to jsDelivr's copy of the
-   * structured-public-domains release the backend was built against.
+   * Where to fetch `psl.bin` from. Defaults to jsDelivr's copy of the newest
+   * structured-public-domains data release.
    */
   readonly url?: string;
   /** Fetch implementation, for proxies and tests. Defaults to the global `fetch`. */
