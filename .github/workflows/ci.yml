@@ -57,8 +57,7 @@ jobs:
         with:
           prefix-key: ${{ runner.os }}-cargo
       - name: Resolve the newest published PSL data
-        # The crate accepts any structured-public-domains release from 0.0.44
-        # below 1.0, so the committed
+        # The crate accepts any structured-public-domains 0.x, so the committed
         # lockfile is a starting point rather than a contract, and resolving it
         # fresh tests what a consumer building today actually gets rather than
         # what was pinned months ago. This job runs on pushes and pull requests,
