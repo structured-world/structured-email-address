@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
 
+import { DEFAULT_PSL_URL } from "@structured-world/structured-public-domains/tiny";
 import { describe, expect, it } from "vitest";
 
 import { contract } from "../../shared/test/contract.js";
@@ -19,15 +19,10 @@ contract("ts", {
 });
 
 describe("ts: default trie source", () => {
-  // The WebAssembly backend embeds the trie of one structured-public-domains
-  // release. The loader's own default URL follows the newest 0.0.x release on
-  // the CDN, so after the next PSL update the two backends would answer from
-  // different lists. The default must name the release this build was checked
-  // against.
-  it("fetches the psl.bin of the release it was built against", async () => {
-    const { version } = JSON.parse(readFileSync(join(dirname(pslPath), "..", "package.json"), "utf8")) as {
-      version: string;
-    };
+  // structured-public-domains publishes a data release almost daily, and its
+  // loader's default URL tracks the newest one. A URL pinned to the build-time
+  // release would freeze the list until this package is released again.
+  it("fetches from the loader's default URL, which tracks the newest release", async () => {
     const urls: string[] = [];
     // `force`: the contract suite above has already loaded a trie.
     await ts.init({
@@ -40,8 +35,6 @@ describe("ts: default trie source", () => {
         },
       },
     });
-    expect(urls).toEqual([
-      `https://cdn.jsdelivr.net/npm/@structured-world/structured-public-domains@${version}/dist/psl.bin`,
-    ]);
+    expect(urls).toEqual([DEFAULT_PSL_URL]);
   });
 });

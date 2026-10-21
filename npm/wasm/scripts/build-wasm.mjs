@@ -59,10 +59,10 @@ if (locked === undefined || cli !== locked) {
 }
 
 // The module embeds the trie of the crate Cargo resolved; the TypeScript backend
-// downloads, by default, the psl.bin of exactly the npm release installed here
-// (npm/ts/scripts/gen-psl-version.mjs pins its URL to that version). Both must
-// be the same list, byte for byte, or the two backends disagree on which
-// domains are registrable.
+// depends on the npm package and, at run time, downloads its newest data
+// release. At build time both must be the same list, byte for byte, so a
+// release ships both backends on one list; after it, the TypeScript backend
+// moves ahead with publicsuffix.org while this module keeps its snapshot.
 const pslCrate = metadata.packages.find((p) => p.name === "structured-public-domains");
 if (pslCrate === undefined) throw new Error("structured-public-domains is not in the Cargo dependency graph");
 const crateTrie = readFileSync(join(dirname(pslCrate.manifest_path), "src", "psl.bin"));
