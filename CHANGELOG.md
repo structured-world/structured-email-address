@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.22](https://github.com/structured-world/structured-email-address/compare/v0.0.21...v0.0.22) - 2026-10-21
+
+### Added
+
+- *(npm)* publish WebAssembly and TypeScript packages ([#100](https://github.com/structured-world/structured-email-address/pull/100))
+
+### Fixed
+
+- *(npm)* let the TypeScript backend track the newest PSL ([#105](https://github.com/structured-world/structured-email-address/pull/105))
+- *(npm)* embed the same Public Suffix List in both backends ([#103](https://github.com/structured-world/structured-email-address/pull/103))
+
 ## [0.0.21](https://github.com/structured-world/structured-email-address/compare/v0.0.20...v0.0.21) - 2026-10-11
 
 ### Added
