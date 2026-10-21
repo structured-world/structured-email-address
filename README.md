@@ -14,6 +14,7 @@ RFC 5321/5322/6531 conformant email address parser, validator, and normalizer fo
 [![CI](https://github.com/structured-world/structured-email-address/actions/workflows/ci.yml/badge.svg)](https://github.com/structured-world/structured-email-address/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/structured-email-address.svg)](https://crates.io/crates/structured-email-address)
 [![npm](https://img.shields.io/npm/v/@structured-world/structured-email-address.svg)](https://www.npmjs.com/package/@structured-world/structured-email-address)
+[![npm downloads](https://img.shields.io/npm/dm/@structured-world/structured-email-address.svg)](https://www.npmjs.com/package/@structured-world/structured-email-address)
 [![docs.rs](https://docs.rs/structured-email-address/badge.svg)](https://docs.rs/structured-email-address)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
@@ -281,11 +282,11 @@ assert_eq!(
 
 The same parser ships on npm with two interchangeable backends behind one API:
 
-| Package | Backend | Public Suffix List |
-|---------|---------|--------------------|
-| `@structured-world/structured-email-address-wasm` | This crate compiled to WebAssembly | Embedded in the module; no network |
-| `@structured-world/structured-email-address-ts` | Native TypeScript port | The same binary trie, downloaded once and cached (IndexedDB in browsers, a temp file in Node) |
-| `@structured-world/structured-email-address` | Either, chosen at startup | As the chosen backend |
+| Package | Version | Downloads | Backend | Public Suffix List |
+|---------|---------|-----------|---------|--------------------|
+| [`@structured-world/structured-email-address-wasm`](https://www.npmjs.com/package/@structured-world/structured-email-address-wasm) | [![npm](https://img.shields.io/npm/v/@structured-world/structured-email-address-wasm.svg)](https://www.npmjs.com/package/@structured-world/structured-email-address-wasm) | [![downloads](https://img.shields.io/npm/dm/@structured-world/structured-email-address-wasm.svg)](https://www.npmjs.com/package/@structured-world/structured-email-address-wasm) | This crate compiled to WebAssembly | Embedded in the module; no network |
+| [`@structured-world/structured-email-address-ts`](https://www.npmjs.com/package/@structured-world/structured-email-address-ts) | [![npm](https://img.shields.io/npm/v/@structured-world/structured-email-address-ts.svg)](https://www.npmjs.com/package/@structured-world/structured-email-address-ts) | [![downloads](https://img.shields.io/npm/dm/@structured-world/structured-email-address-ts.svg)](https://www.npmjs.com/package/@structured-world/structured-email-address-ts) | Native TypeScript port | The same binary trie, downloaded once and cached (IndexedDB in browsers, a temp file in Node) |
+| [`@structured-world/structured-email-address`](https://www.npmjs.com/package/@structured-world/structured-email-address) | [![npm](https://img.shields.io/npm/v/@structured-world/structured-email-address.svg)](https://www.npmjs.com/package/@structured-world/structured-email-address) | [![downloads](https://img.shields.io/npm/dm/@structured-world/structured-email-address.svg)](https://www.npmjs.com/package/@structured-world/structured-email-address) | Either, chosen at startup | As the chosen backend |
 
 Install the one you want; each downloads only its own backend:
 
