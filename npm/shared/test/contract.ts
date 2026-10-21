@@ -93,6 +93,18 @@ export function contract(name: string, backend: Backend): void {
       );
     });
 
+    // Length limits are checked after the parse, so the parse itself must stay
+    // linear: a long whitespace run inside a display name once took quadratic
+    // time in the trailing trim, enough for one input to stall the event loop.
+    it("parses a long display name in linear time", () => {
+      const name = `a${" ".repeat(50_000)}b`;
+      const started = performance.now();
+      const email = backend.parse(`${name}   <x@example.com>`, { allowDisplayName: true });
+      expect(performance.now() - started).toBeLessThan(500);
+      // The limits bound the addr-spec, not the display name, so this parses.
+      expect(email.displayName).toBe(name);
+    });
+
     it("parses a batch in order, with one outcome per input", () => {
       const results = backend.parseBatch(["a@example.com", "bad", `x${String.fromCharCode(0xdc00)}@y.com`, "b@example.org"]);
       expect(results.map((r) => r.ok)).toEqual([true, false, false, true]);

@@ -2,10 +2,8 @@
 // either backend. Both are optional dependencies; `init()` loads only the one
 // it selects, through a dynamic import a bundler splits into its own chunk.
 
-import type { Config, EmailAddress } from "../../shared/src/types.js";
-import type { ParseOutcome, Parser } from "../../shared/src/api.js";
-import type * as TsBackend from "@structured-world/structured-email-address-ts";
-import type * as WasmBackend from "@structured-world/structured-email-address-wasm";
+import type { Config, EmailAddress, TsInitOptions, WasmInitOptions } from "../../shared/src/types.js";
+import type { Frontend, ParseOutcome, Parser } from "../../shared/src/api.js";
 
 export * from "../../shared/src/public.js";
 
@@ -20,16 +18,20 @@ export interface InitOptions {
    */
   readonly backend?: Backend | "auto";
   /** Passed to the WebAssembly backend's `init`. */
-  readonly wasm?: WasmBackend.InitOptions;
+  readonly wasm?: WasmInitOptions;
   /** Passed to the TypeScript backend's `init`. */
-  readonly ts?: TsBackend.InitOptions;
+  readonly ts?: TsInitOptions;
 }
 
-type Module = typeof TsBackend | typeof WasmBackend;
-
-let active: { readonly name: Backend; readonly module: Module } | undefined;
+// Typed by the shared interface both backends implement, never by their own
+// modules: the declarations then name no optional package, and type-check with
+// only one backend installed.
+let active: { readonly name: Backend; readonly module: Frontend } | undefined;
 
 async function start(name: Backend, options: InitOptions): Promise<Backend> {
+  // Cleared first, so a failed start leaves nothing answering rather than the
+  // backend the caller just asked to replace.
+  active = undefined;
   if (name === "wasm") {
     const module = await import("@structured-world/structured-email-address-wasm");
     await module.init(options.wasm);
@@ -51,20 +53,30 @@ async function start(name: Backend, options: InitOptions): Promise<Backend> {
  * as under a Content Security Policy without `wasm-unsafe-eval`, and when the
  * WebAssembly package is not installed.
  *
+ * A failed call leaves no backend in use, whatever was in use before it.
+ *
  * @returns the backend now in use.
- * @throws if the requested backend, or under `"auto"` both, cannot start.
+ * @throws if the requested backend cannot start; under `"auto"`, an
+ *   `AggregateError` carrying the failure of each backend it tried.
  */
 export async function init(options: InitOptions = {}): Promise<Backend> {
   const choice = options.backend ?? "auto";
   if (choice !== "auto") return start(choice, options);
+  const failures: unknown[] = [];
   if (typeof WebAssembly === "object") {
     try {
       return await start("wasm", options);
-    } catch {
-      // Fall through to the backend that needs no WebAssembly.
+    } catch (err) {
+      // Kept for the report if the fallback fails too.
+      failures.push(err);
     }
   }
-  return start("ts", options);
+  try {
+    return await start("ts", options);
+  } catch (err) {
+    failures.push(err);
+    throw new AggregateError(failures, "no backend could start");
+  }
 }
 
 /** The backend in use, or `undefined` before {@link init}. */
@@ -72,7 +84,7 @@ export function backend(): Backend | undefined {
   return active?.name;
 }
 
-function current(): Module {
+function current(): Frontend {
   if (active === undefined) throw new Error("not initialized: call `await init()` first");
   return active.module;
 }

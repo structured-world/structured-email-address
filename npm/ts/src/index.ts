@@ -3,10 +3,10 @@
 // same binary trie as the Rust crate, downloaded once by
 // @structured-world/structured-public-domains/tiny and cached locally.
 
-import { isLoaded, load, type LoadOptions } from "@structured-world/structured-public-domains/tiny";
+import { isLoaded, load } from "@structured-world/structured-public-domains/tiny";
 
 import { frontend } from "../../shared/src/api.js";
-import type { Engine } from "../../shared/src/types.js";
+import type { Engine, TsInitOptions } from "../../shared/src/types.js";
 import { confusableSkeleton as skeleton } from "./confusables.js";
 import { parseEmail, type Compiled } from "./email.js";
 import { isSmtpMailbox as smtpMailbox } from "./parser.js";
@@ -15,10 +15,7 @@ import { BUILTIN, compileProvider } from "./provider.js";
 export * from "../../shared/src/public.js";
 
 /** Options for {@link init}. */
-export interface InitOptions {
-  /** Where and how the Public Suffix List trie is fetched and cached. */
-  readonly psl?: LoadOptions;
-}
+export type InitOptions = TsInitOptions;
 
 /**
  * Load the Public Suffix List trie. Must be awaited before any other function.

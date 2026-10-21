@@ -13,6 +13,9 @@ export type {
   IpScope,
   LiteralScope,
   ProviderRule,
+  PslLoadOptions,
   Strictness,
   SubaddressPolicy,
+  TsInitOptions,
+  WasmInitOptions,
 } from "./types.js";

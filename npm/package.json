@@ -11,8 +11,8 @@
   ],
   "scripts": {
     "build": "npm run build -w ts -w wasm && npm run build -w default",
-    "test": "npm run test --workspaces",
-    "typecheck": "npm run typecheck --workspaces",
+    "test": "npm run build && npm run test --workspaces",
+    "typecheck": "npm run build && npm run typecheck --workspaces",
     "parity": "node scripts/parity.mjs"
   },
   "devDependencies": {

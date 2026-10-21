@@ -26,14 +26,20 @@ jobs:
     permissions:
       contents: read
       id-token: write   # npm provenance
+    # Pinned to commits: this job holds an OIDC token that can publish, and
+    # runs every action below before it does.
     steps:
-      - uses: actions/checkout@v7
-
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # npm ci and the build run dependency code; the token is not needed after checkout.
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
           targets: wasm32-unknown-unknown
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"

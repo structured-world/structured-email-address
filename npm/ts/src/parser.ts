@@ -119,10 +119,12 @@ const LF = 0x0a;
 const str = (cp: number): string => (cp === END ? "\0" : String.fromCodePoint(cp));
 
 /**
- * Rust's `str::trim_end`, which strips the Unicode `White_Space` property.
- * `String.prototype.trimEnd` is a different set: it adds U+FEFF and lacks U+0085.
+ * One character of the Unicode `White_Space` property, the set Rust's
+ * `str::trim_end` strips. `String.prototype.trimEnd` is a different set: it adds
+ * U+FEFF and lacks U+0085. Every `White_Space` code point is in the BMP, so a
+ * single UTF-16 unit is a whole character here.
  */
-const TRAILING_WHITE_SPACE = /\p{White_Space}+$/u;
+const WHITE_SPACE = /^\p{White_Space}$/u;
 
 /** ASCII SMTP identity check sharing the parser's strict grammar. */
 export function isSmtpMailbox(input: string): boolean {
@@ -202,8 +204,11 @@ function tryParseDisplayName(parser: Parser, allowObs: boolean): Span | undefine
   for (;;) {
     const c = parser.peek();
     if (c === LT && foundContent) {
-      const name = parser.input.slice(start, parser.pos);
-      return { start, end: start + name.replace(TRAILING_WHITE_SPACE, "").length };
+      // A backward scan, linear like `trim_end`. An unanchored `\s+$` would
+      // retry from every position of a whitespace run, which is quadratic.
+      let end = parser.pos;
+      while (end > start && WHITE_SPACE.test(parser.input.charAt(end - 1))) end--;
+      return { start, end };
     }
     if (c === AT || c === GT) {
       parser.pos = save;

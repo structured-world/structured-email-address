@@ -59,10 +59,19 @@ function answer(c) {
   }
 }
 
+/** Write a chunk, waiting for the pipe to drain rather than buffering the run. */
+async function write(chunk) {
+  if (!process.stdout.write(chunk)) await new Promise((resolve) => process.stdout.once("drain", resolve));
+}
+
 const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
-const out = [];
+let batch = [];
 for await (const line of rl) {
   if (line === "") continue;
-  out.push(JSON.stringify(sorted(answer(JSON.parse(line)))));
+  batch.push(JSON.stringify(sorted(answer(JSON.parse(line)))) + "\n");
+  if (batch.length === 10_000) {
+    await write(batch.join(""));
+    batch = [];
+  }
 }
-process.stdout.write(out.join("\n") + (out.length ? "\n" : ""));
+if (batch.length > 0) await write(batch.join(""));

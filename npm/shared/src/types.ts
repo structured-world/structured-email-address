@@ -190,6 +190,42 @@ export interface ResolvedProviderRule {
   readonly freemail: boolean;
 }
 
+/** Options for the WebAssembly backend's `init`. */
+export interface WasmInitOptions {
+  /**
+   * A precompiled module or the module's bytes, for environments that compile
+   * WebAssembly elsewhere (a worker, a cache). Defaults to the embedded module.
+   */
+  readonly module?: WebAssembly.Module | BufferSource;
+}
+
+/**
+ * How the TypeScript backend fetches and caches the Public Suffix List trie:
+ * the options of `load` in `@structured-world/structured-public-domains/tiny`.
+ * Spelled out here so the default package's declarations name no optional
+ * dependency; the TypeScript backend passes it to `load`, which checks it.
+ */
+export interface PslLoadOptions {
+  /** Where to fetch `psl.bin` from. Defaults to the package's jsDelivr URL. */
+  readonly url?: string;
+  /** Fetch implementation, for proxies and tests. Defaults to the global `fetch`. */
+  readonly fetch?: typeof fetch;
+  /** Keep a persistent local copy. Default `true`. */
+  readonly cache?: boolean;
+  /** How long the local copy stays fresh, in milliseconds. Default 24 hours. */
+  readonly cacheTtlMs?: number;
+  /** Node only: the directory for the cache file. */
+  readonly cacheDir?: string;
+  /** Fetch again even when a fresh copy is loaded or cached. */
+  readonly force?: boolean;
+}
+
+/** Options for the TypeScript backend's `init`. */
+export interface TsInitOptions {
+  /** Where and how the Public Suffix List trie is fetched and cached. */
+  readonly psl?: PslLoadOptions;
+}
+
 /** What a backend implements; the public functions are built on top of it. */
 export interface Engine<Compiled> {
   /** Prepare a resolved config once for many parses. */

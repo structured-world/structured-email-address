@@ -255,11 +255,17 @@ export function frontend<C>(engine: () => Engine<C>): Frontend {
             results[i] = { ok: false, error: new EmailAddressError(bad) };
           }
         });
-        engine()
-          .parseBatch(clean, compiled)
-          .forEach((raw, j) => {
+        if (clean.length > 0) {
+          const raws = engine().parseBatch(clean, compiled);
+          // One outcome per input is the engine's contract; a mismatch would
+          // otherwise surface as undefined entries or silently dropped outcomes.
+          if (raws.length !== clean.length) {
+            throw new Error(`backend returned ${raws.length} outcomes for ${clean.length} inputs`);
+          }
+          raws.forEach((raw, j) => {
             results[slots[j]!] = outcome(raw);
           });
+        }
         return results as ParseOutcome[];
       },
     };

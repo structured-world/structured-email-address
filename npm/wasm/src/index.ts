@@ -3,20 +3,14 @@
 // so results are the Rust crate's by construction and nothing is fetched.
 
 import { frontend } from "../../shared/src/api.js";
-import type { Engine, RawOutcome, ResolvedConfig } from "../../shared/src/types.js";
+import type { Engine, RawOutcome, WasmInitOptions } from "../../shared/src/types.js";
 import initModule, * as wasm from "../generated/bindgen/structured_email_address_wasm.js";
 import { WASM_BASE64 } from "../generated/wasm-data.cjs";
 
 export * from "../../shared/src/public.js";
 
 /** Options for {@link init}. */
-export interface InitOptions {
-  /**
-   * A precompiled module or the module's bytes, for environments that compile
-   * WebAssembly elsewhere (a worker, a cache). Defaults to the embedded module.
-   */
-  readonly module?: WebAssembly.Module | BufferSource;
-}
+export type InitOptions = WasmInitOptions;
 
 let ready = false;
 let pending: Promise<void> | undefined;
@@ -31,7 +25,9 @@ function decodeBase64(b64: string): Uint8Array {
 
 /**
  * Instantiate the WebAssembly module. Must be awaited before any other
- * function. Idempotent: concurrent and repeated calls share one instance.
+ * function. Idempotent: concurrent and repeated calls share one instance, so
+ * once a call has started, a later call's `module` option is ignored, without
+ * a warning. A call that failed does not count; the next one starts afresh.
  *
  * @throws if the runtime cannot instantiate WebAssembly (no `WebAssembly`
  *   global, or a Content Security Policy without `wasm-unsafe-eval`).
@@ -56,12 +52,12 @@ export function isInitialized(): boolean {
   return ready;
 }
 
-const engine: Engine<ResolvedConfig> = {
-  // The module builds its configuration from the resolved options on each
-  // call; there is nothing to hold on to between calls.
-  compile: (config) => config,
-  parse: (input, config) => wasm.parse(input, config) as RawOutcome,
-  parseBatch: (inputs, config) => wasm.parseBatch([...inputs], config) as RawOutcome[],
+const engine: Engine<wasm.CompiledConfig> = {
+  // Built once in the module; wasm-bindgen frees it when the parser holding it
+  // is garbage-collected.
+  compile: (config) => new wasm.CompiledConfig(config),
+  parse: (input, compiled) => compiled.parse(input) as RawOutcome,
+  parseBatch: (inputs, compiled) => compiled.parseBatch([...inputs]) as RawOutcome[],
   isSmtpMailbox: (input) => wasm.isSmtpMailbox(input),
   confusableSkeleton: (input) => wasm.confusableSkeleton(input),
 };

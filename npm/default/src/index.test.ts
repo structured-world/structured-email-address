@@ -49,8 +49,29 @@ describe("init", () => {
   it("uses the backend asked for, and switches on a later call", async () => {
     const api = await fresh();
     expect(await api.init({ backend: "ts", ts })).toBe("ts");
+    expect(api.parse("a@Example.co.uk", { domainCheck: "psl" }).domain).toBe("example.co.uk");
     expect(await api.init({ backend: "wasm" })).toBe("wasm");
     expect(api.backend()).toBe("wasm");
+    expect(api.parse("a@Example.co.uk", { domainCheck: "psl" }).domain).toBe("example.co.uk");
+  });
+
+  // A failed init must not leave the previous backend answering: the caller saw
+  // the rejection, and later calls quietly using another backend would hide it.
+  it("leaves no backend active after a failed switch", async () => {
+    const api = await fresh();
+    await api.init({ backend: "ts", ts });
+    await expect(api.init({ backend: "wasm", wasm: { module: new Uint8Array([0, 1, 2, 3]) } })).rejects.toThrow();
+    expect(api.backend()).toBeUndefined();
+    expect(() => api.parse("a@example.com")).toThrow(/init/);
+  });
+
+  it("reports both failures when auto can start neither backend", async () => {
+    const api = await fresh();
+    const failing = { psl: { fetch: async () => Promise.reject(new Error("offline")), cache: false, force: true } };
+    const error = await api.init({ ts: failing, wasm: { module: new Uint8Array([0, 1, 2, 3]) } }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).errors).toHaveLength(2);
+    expect(api.backend()).toBeUndefined();
   });
 
   it("errors from either backend are instances of the exported class", async () => {

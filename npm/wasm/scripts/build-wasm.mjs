@@ -17,7 +17,27 @@ const raw = join(repo, "target", "wasm32-unknown-unknown", "wasm", "structured_e
 const bindgenWasm = join(bindgenDir, "structured_email_address_wasm_bg.wasm");
 const optimized = join(generated, "module.wasm");
 
-const run = (cmd, args) => execFileSync(cmd, args, { cwd: repo, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8" });
+/** How to get each tool, for the error when one is missing. */
+const INSTALL = {
+  cargo: "install Rust from https://rustup.rs, then: rustup target add wasm32-unknown-unknown",
+  "wasm-bindgen": "cargo install wasm-bindgen-cli --locked --version <the wasm-bindgen version in Cargo.lock>",
+  "wasm-opt": "install binaryen (https://github.com/WebAssembly/binaryen/releases), which provides wasm-opt",
+};
+
+function run(cmd, args) {
+  try {
+    // `cargo metadata` prints the whole dependency graph, well past the default 1 MiB.
+    return execFileSync(cmd, args, {
+      cwd: repo,
+      stdio: ["ignore", "pipe", "inherit"],
+      encoding: "utf8",
+      maxBuffer: 256 * 1024 * 1024,
+    });
+  } catch (err) {
+    if (err.code === "ENOENT") throw new Error(`${cmd} is not on PATH; ${INSTALL[cmd] ?? "install it"}`);
+    throw err;
+  }
+}
 
 // The bindgen schema is unstable, so the CLI must be the exact version the
 // lockfile resolved for the crate.
