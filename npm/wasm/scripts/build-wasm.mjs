@@ -5,6 +5,7 @@
 // startup. Everything under generated/ is build output and never committed.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,6 +24,12 @@ const INSTALL = {
   "wasm-bindgen": "cargo install wasm-bindgen-cli --locked --version <the wasm-bindgen version in Cargo.lock>",
   "wasm-opt": "install binaryen (https://github.com/WebAssembly/binaryen/releases), which provides wasm-opt",
 };
+
+/** The `psl.bin` the TypeScript backend's PSL package ships, resolved as that package resolves it. */
+function pslNpmTriePath() {
+  const require = createRequire(join(repo, "npm", "ts", "package.json"));
+  return join(dirname(require.resolve("@structured-world/structured-public-domains/tiny")), "psl.bin");
+}
 
 function run(cmd, args) {
   try {
@@ -48,6 +55,23 @@ if (locked === undefined || cli !== locked) {
   throw new Error(
     `wasm-bindgen CLI ${cli} does not match the locked crate ${locked}; ` +
       `install it with: cargo install wasm-bindgen-cli --locked --version ${locked}`,
+  );
+}
+
+// The module embeds the trie of the crate Cargo resolved; the TypeScript backend
+// downloads, by default, the psl.bin of exactly the npm release installed here
+// (npm/ts/scripts/gen-psl-version.mjs pins its URL to that version). Both must
+// be the same list, byte for byte, or the two backends disagree on which
+// domains are registrable.
+const pslCrate = metadata.packages.find((p) => p.name === "structured-public-domains");
+if (pslCrate === undefined) throw new Error("structured-public-domains is not in the Cargo dependency graph");
+const crateTrie = readFileSync(join(dirname(pslCrate.manifest_path), "src", "psl.bin"));
+const npmTrie = readFileSync(pslNpmTriePath());
+if (!crateTrie.equals(npmTrie)) {
+  throw new Error(
+    `the Public Suffix List of crate structured-public-domains ${pslCrate.version} differs from the npm ` +
+      "package the TypeScript backend loads; update Cargo.lock (cargo update -p structured-public-domains) " +
+      "or npm/package-lock.json so both resolve the same release",
   );
 }
 
