@@ -193,10 +193,16 @@ export interface ResolvedProviderRule {
 /** Options for the WebAssembly backend's `init`. */
 export interface WasmInitOptions {
   /**
-   * A precompiled module or the module's bytes, for environments that compile
-   * WebAssembly elsewhere (a worker, a cache). Defaults to the embedded module.
+   * A precompiled `WebAssembly.Module` or the module's bytes, for environments
+   * that compile WebAssembly elsewhere (a worker, a cache). Defaults to the
+   * embedded module.
+   *
+   * Spelled without the DOM library's names, so a Node consumer type-checks
+   * these declarations without it: `BufferSource` is `ArrayBuffer |
+   * ArrayBufferView`, and `WebAssembly.Module` is an empty interface, which is
+   * what `object` already says.
    */
-  readonly module?: WebAssembly.Module | BufferSource;
+  readonly module?: ArrayBuffer | ArrayBufferView | object;
 }
 
 /**
@@ -230,6 +236,12 @@ export interface TsInitOptions {
 export interface Engine<Compiled> {
   /** Prepare a resolved config once for many parses. */
   compile(config: ResolvedConfig): Compiled;
+  /**
+   * Free what `compile` allocated outside the JavaScript heap, as soon as a
+   * one-shot call is done with it. A parser from `createParser` is left to the
+   * garbage collector instead, since its lifetime is the caller's.
+   */
+  release?(compiled: Compiled): void;
   parse(input: string, compiled: Compiled): RawOutcome;
   parseBatch(inputs: readonly string[], compiled: Compiled): RawOutcome[];
   isSmtpMailbox(input: string): boolean;

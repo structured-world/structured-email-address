@@ -34,7 +34,10 @@ function decodeBase64(b64: string): Uint8Array {
  */
 export function init(options: InitOptions = {}): Promise<void> {
   if (ready) return Promise.resolve();
-  pending ??= initModule({ module_or_path: options.module ?? decodeBase64(WASM_BASE64) }).then(
+  // The option is typed without DOM names (see WasmInitOptions); what it holds
+  // is a module or its bytes, which instantiation checks for itself.
+  const source = (options.module ?? decodeBase64(WASM_BASE64)) as WebAssembly.Module | BufferSource;
+  pending ??= initModule({ module_or_path: source }).then(
     () => {
       ready = true;
     },
@@ -56,6 +59,7 @@ const engine: Engine<wasm.CompiledConfig> = {
   // Built once in the module; wasm-bindgen frees it when the parser holding it
   // is garbage-collected.
   compile: (config) => new wasm.CompiledConfig(config),
+  release: (compiled) => compiled.free(),
   parse: (input, compiled) => compiled.parse(input) as RawOutcome,
   parseBatch: (inputs, compiled) => compiled.parseBatch([...inputs]) as RawOutcome[],
   isSmtpMailbox: (input) => wasm.isSmtpMailbox(input),

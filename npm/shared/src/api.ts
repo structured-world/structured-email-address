@@ -232,8 +232,7 @@ function outcome(raw: RawOutcome): ParseOutcome {
 
 /** Build the public functions on a backend's engine, obtained lazily. */
 export function frontend<C>(engine: () => Engine<C>): Frontend {
-  const createParser = (config?: Config): Parser => {
-    const compiled = engine().compile(resolveConfig(config));
+  const bind = (compiled: C): Parser => {
     return {
       parse(input) {
         const bad = surrogateError(input);
@@ -270,10 +269,21 @@ export function frontend<C>(engine: () => Engine<C>): Frontend {
       },
     };
   };
+  // A one-shot call frees its configuration on the way out, rather than leaving
+  // it to the garbage collector, which cannot run inside a synchronous loop.
+  const oneShot = <T>(config: Config | undefined, run: (parser: Parser) => T): T => {
+    const e = engine();
+    const compiled = e.compile(resolveConfig(config));
+    try {
+      return run(bind(compiled));
+    } finally {
+      e.release?.(compiled);
+    }
+  };
   return {
-    createParser,
-    parse: (input, config) => createParser(config).parse(input),
-    parseBatch: (inputs, config) => createParser(config).parseBatch(inputs),
+    createParser: (config) => bind(engine().compile(resolveConfig(config))),
+    parse: (input, config) => oneShot(config, (parser) => parser.parse(input)),
+    parseBatch: (inputs, config) => oneShot(config, (parser) => parser.parseBatch(inputs)),
     isSmtpMailbox: (input) => engine().isSmtpMailbox(input),
     confusableSkeleton: (input) => engine().confusableSkeleton(toWellFormed(input)),
   };

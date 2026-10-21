@@ -212,6 +212,10 @@ jobs:
           for f in default/dist/index.d.ts default/dist/index.d.cts; do
             if grep -q 'structured-email-address-\(ts\|wasm\)' "$f"; then echo "$f imports an optional backend"; exit 1; fi
           done
+      # Node consumers often have no DOM library and check every declaration.
+      - name: Declarations compile without the DOM library
+        working-directory: npm
+        run: npx tsc -p consumer-check
       - name: Parity with the Rust crate
         run: |
           cargo build --release --locked -p structured-email-address-wasm --example parity
