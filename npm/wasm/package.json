@@ -1,0 +1,55 @@
+{
+  "name": "@structured-world/structured-email-address-wasm",
+  "version": "0.0.21",
+  "description": "RFC 5321/5322/6531 email address parser, validator and normalizer: the Rust crate compiled to WebAssembly, with the Public Suffix List embedded. No network, ESM + CommonJS.",
+  "license": "Apache-2.0",
+  "author": "Dmitry Prudnikov <mail@polaz.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/structured-world/structured-email-address",
+    "directory": "npm/wasm"
+  },
+  "keywords": [
+    "email",
+    "email-address",
+    "validation",
+    "rfc-5322",
+    "rfc-5321",
+    "normalization",
+    "wasm",
+    "webassembly"
+  ],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "gen:data": "node scripts/build-wasm.mjs",
+    "build": "npm run gen:data && tsup && node -e \"const fs=require('fs');fs.copyFileSync('generated/wasm-data.cjs','dist/wasm-data.cjs');fs.copyFileSync('../../README.md','README.md')\"",
+    "test": "npm run gen:data && vitest run",
+    "typecheck": "npm run gen:data && tsc --noEmit"
+  }
+}

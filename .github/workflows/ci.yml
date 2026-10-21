@@ -163,6 +163,69 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  npm:
+    needs: lint
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: npm
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Install the WebAssembly toolchain
+        run: ./npm/scripts/install-wasm-tools.sh
+      - name: Install deps
+        working-directory: npm
+        run: npm ci
+      # Built first: the default package imports both backends by name, and
+      # their exports resolve to dist. Each build generates what it reads (the
+      # WebAssembly module, the confusables table) from the Rust sources;
+      # nothing generated is committed.
+      - name: Build (ESM + CJS + dts)
+        working-directory: npm
+        run: npm run build
+      - name: Typecheck
+        working-directory: npm
+        run: npm run typecheck --workspaces
+      - name: Unit tests
+        working-directory: npm
+        run: npm run test --workspaces
+      - name: Smoke-test both module formats
+        working-directory: npm
+        run: |
+          node --input-type=module -e "import { init, parse } from './default/dist/index.js'; if (await init() !== 'wasm' || parse('a@Example.COM').domain !== 'example.com') process.exit(1)"
+          node --input-type=commonjs -e "const { init, parse } = require('./default/dist/index.cjs'); init({ backend: 'ts' }).then((b) => { if (b !== 'ts' || parse('a@Example.COM').domain !== 'example.com') process.exit(1) })"
+      # A consumer may install one backend only; the default package's
+      # declarations must then still resolve, so they may name neither.
+      - name: Declarations name no optional backend
+        working-directory: npm
+        run: |
+          for f in default/dist/index.d.ts default/dist/index.d.cts; do
+            if grep -q 'structured-email-address-\(ts\|wasm\)' "$f"; then echo "$f imports an optional backend"; exit 1; fi
+          done
+      # Node consumers often have no DOM library and check every declaration.
+      - name: Declarations compile without the DOM library
+        working-directory: npm
+        run: npx tsc -p consumer-check
+      - name: Parity with the Rust crate
+        run: |
+          cargo build --release --locked -p structured-email-address-wasm --example parity
+          node npm/scripts/parity-cases.mjs > "$RUNNER_TEMP/cases.jsonl"
+          ./target/release/examples/parity < "$RUNNER_TEMP/cases.jsonl" > "$RUNNER_TEMP/rust.out"
+          node npm/scripts/parity.mjs wasm < "$RUNNER_TEMP/cases.jsonl" > "$RUNNER_TEMP/wasm.out"
+          node npm/scripts/parity.mjs ts < "$RUNNER_TEMP/cases.jsonl" > "$RUNNER_TEMP/ts.out"
+          diff "$RUNNER_TEMP/rust.out" "$RUNNER_TEMP/wasm.out"
+          diff "$RUNNER_TEMP/rust.out" "$RUNNER_TEMP/ts.out"
+
   bench:
     needs: lint
     timeout-minutes: 15

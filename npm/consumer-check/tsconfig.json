@@ -1,0 +1,15 @@
+{
+  // A Node consumer with no DOM library, checking every declaration it is
+  // shipped: the published types must compile without browser globals.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "strict": true,
+    "skipLibCheck": false,
+    "noEmit": true
+  },
+  "files": ["index.ts"]
+}

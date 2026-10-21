@@ -1,0 +1,58 @@
+{
+  "name": "@structured-world/structured-email-address",
+  "version": "0.0.21",
+  "description": "RFC 5321/5322/6531 email address parser, validator and normalizer for JavaScript: WebAssembly or native TypeScript behind one API, chosen at startup. Subaddress extraction, provider-aware normalization, Public Suffix List validation, anti-homoglyph skeletons.",
+  "license": "Apache-2.0",
+  "author": "Dmitry Prudnikov <mail@polaz.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/structured-world/structured-email-address",
+    "directory": "npm/default"
+  },
+  "keywords": [
+    "email",
+    "email-address",
+    "validation",
+    "rfc-5322",
+    "rfc-5321",
+    "normalization",
+    "psl",
+    "wasm"
+  ],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup && node -e \"require('fs').copyFileSync('../../README.md','README.md')\"",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "optionalDependencies": {
+    "@structured-world/structured-email-address-ts": "0.0.21",
+    "@structured-world/structured-email-address-wasm": "0.0.21"
+  }
+}

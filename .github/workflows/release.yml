@@ -1,4 +1,4 @@
-name: Publish to crates.io
+name: Publish
 
 on:
   release:
@@ -18,3 +18,72 @@ jobs:
       - run: cargo publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+  publish-npm:
+    needs: publish
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write   # npm provenance
+    # Pinned to commits: this job holds an OIDC token that can publish, and
+    # runs every action below before it does.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # npm ci and the build run dependency code; the token is not needed after checkout.
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      # Trusted publishing (OIDC) requires npm >= 11.5.1; Node 22 ships an older
+      # CLI. Pin the version so release behavior stays deterministic.
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@11.5.1
+
+      - name: Install the WebAssembly toolchain
+        run: ./npm/scripts/install-wasm-tools.sh
+
+      - name: Install deps
+        working-directory: npm
+        run: npm ci
+
+      # Cargo.toml is the single source of truth for the version. release-plz
+      # bumps it but does not know about the npm packages, so sync them here,
+      # including the default package's pins on the two backends, to keep the
+      # crate and every package on one version each release.
+      - name: Sync npm versions to crate
+        working-directory: npm
+        run: |
+          CRATE_VERSION=$(cargo metadata --manifest-path ../Cargo.toml --format-version 1 --no-deps --locked | jq -r '.packages[] | select(.name == "structured-email-address") | .version')
+          for dir in ts wasm default; do
+            node -e "const fs=require('fs');const f='$dir/package.json';const p=JSON.parse(fs.readFileSync(f));p.version='${CRATE_VERSION}';for(const d of Object.keys(p.optionalDependencies??{}))p.optionalDependencies[d]='${CRATE_VERSION}';fs.writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
+          done
+          echo "npm versions synced to ${CRATE_VERSION}"
+
+      - name: Build
+        working-directory: npm
+        run: npm run build
+
+      # Backends first: the default package pins them, and installing it must
+      # find both versions already on the registry.
+      - name: Publish to npm
+        working-directory: npm
+        run: |
+          for dir in ts wasm default; do
+            VERSION=$(node -p "require('./$dir/package.json').version")
+            PKG=$(node -p "require('./$dir/package.json').name")
+            if npm view "${PKG}@${VERSION}" version >/dev/null 2>&1; then
+              echo "${PKG}@${VERSION} already published to npm; skipping."
+              continue
+            fi
+            npm publish -w "$dir" --provenance --access public
+          done
