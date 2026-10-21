@@ -46,13 +46,13 @@
     "node": "^22.14.0 || >=24.0.0"
   },
   "scripts": {
-    "gen:data": "node scripts/gen-confusables.mjs",
+    "gen:data": "node scripts/gen-confusables.mjs && node scripts/gen-psl-version.mjs",
     "build": "npm run gen:data && tsup && node -e \"require('fs').copyFileSync('../../README.md','README.md')\"",
     "test": "npm run gen:data && vitest run",
     "typecheck": "npm run gen:data && tsc --noEmit"
   },
   "dependencies": {
-    "@structured-world/structured-public-domains": "~0.0.44",
+    "@structured-world/structured-public-domains": "0.0.44",
     "tr46": "^7.0.0"
   }
 }

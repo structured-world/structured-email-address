@@ -212,7 +212,10 @@ export interface WasmInitOptions {
  * dependency; the TypeScript backend passes it to `load`, which checks it.
  */
 export interface PslLoadOptions {
-  /** Where to fetch `psl.bin` from. Defaults to the package's jsDelivr URL. */
+  /**
+   * Where to fetch `psl.bin` from. Defaults to jsDelivr's copy of the
+   * structured-public-domains release the backend was built against.
+   */
   readonly url?: string;
   /** Fetch implementation, for proxies and tests. Defaults to the global `fetch`. */
   readonly fetch?: typeof fetch;
