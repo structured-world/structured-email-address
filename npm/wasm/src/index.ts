@@ -34,10 +34,13 @@ function decodeBase64(b64: string): Uint8Array {
  */
 export function init(options: InitOptions = {}): Promise<void> {
   if (ready) return Promise.resolve();
+  // A call made while instantiation is under way joins it, before reading its
+  // options or decoding the embedded module again.
+  if (pending !== undefined) return pending;
   // The option is typed without DOM names (see WasmInitOptions); what it holds
   // is a module or its bytes, which instantiation checks for itself.
   const source = (options.module ?? decodeBase64(WASM_BASE64)) as WebAssembly.Module | BufferSource;
-  pending ??= initModule({ module_or_path: source }).then(
+  pending = initModule({ module_or_path: source }).then(
     () => {
       ready = true;
     },
