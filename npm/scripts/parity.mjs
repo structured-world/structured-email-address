@@ -2,11 +2,12 @@
 // one npm backend and print it as JSON with sorted keys. Its output must be
 // byte-identical to the Rust harness; see the `npm` CI job.
 //
-// The TypeScript backend loads the Public Suffix List trie from the crate the
-// Rust harness linked, so both read the same list.
+// The TypeScript backend loads the `psl.bin` its npm dependency ships, the file
+// consumers download, read from disk instead of the CDN. The WASM build refuses
+// to embed a crate trie that differs from it, so this compares like with like.
 // Run: node scripts/parity.mjs <ts|wasm> < cases.jsonl
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -17,15 +18,9 @@ if (which !== "ts" && which !== "wasm") throw new Error("usage: parity.mjs <ts|w
 
 const backend = await import(join(here, "..", which, "dist", "index.js"));
 if (which === "ts") {
-  const metadata = JSON.parse(
-    execFileSync("cargo", ["metadata", "--format-version", "1", "--locked"], {
-      cwd: join(here, "..", ".."),
-      encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
-    }),
-  );
-  const psl = metadata.packages.find((p) => p.name === "structured-public-domains");
-  const bytes = readFileSync(join(dirname(psl.manifest_path), "src", "psl.bin"));
+  const require = createRequire(join(here, "..", "ts", "package.json"));
+  const tiny = require.resolve("@structured-world/structured-public-domains/tiny");
+  const bytes = readFileSync(join(dirname(tiny), "psl.bin"));
   await backend.init({ psl: { fetch: async () => new Response(bytes), cache: false } });
 } else {
   await backend.init();
