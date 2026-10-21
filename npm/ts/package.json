@@ -52,7 +52,7 @@
     "typecheck": "npm run gen:data && tsc --noEmit"
   },
   "dependencies": {
-    "@structured-world/structured-public-domains": "~0.0.43",
+    "@structured-world/structured-public-domains": "~0.0.44",
     "tr46": "^7.0.0"
   }
 }
